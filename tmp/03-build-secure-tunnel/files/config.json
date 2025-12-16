@@ -1,0 +1,16 @@
+{
+  "endpoint": "AWS_IOT_ENDPOINT",
+  "cert": "DEVICE_CERT",
+  "key": "DEVICE_KEY",
+  "root-ca": "ROOT_CA",
+  "thing-name": "DEVICE_ID",
+  "logging": { "level": "INFO", "type": "STDOUT" },
+  "secure-tunneling": {
+    "enabled": true,
+    "destination-access-token": "",
+    "service-id": "",
+    "region": "us-east-2",
+    "local-proxy-mode": "source",
+    "local-source-list": ["ssh:22"]
+  }
+}
