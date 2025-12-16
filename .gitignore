@@ -6,8 +6,7 @@ SKIP
 SKIP_IMAGES
 .pc
 *-pc
-<<<<<<< HEAD
-.vscode/
-=======
 archive/*
->>>>>>> 74d00a1 (initial image working)
+*.pem
+*.key
+*.crt
