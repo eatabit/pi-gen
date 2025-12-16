@@ -22,22 +22,22 @@
 ## setting the hostname here will not make the machine reachable by this name.
 ## You may also wish to install avahi-daemon (see the "packages:" key below)
 ## to make your machine reachable by the .local domain
-#hostname: raspberrypi
+hostname: eatabit
 
 ## Set up the keyboard layout. See localectl(1), in particular the various
 ## list-x11-* sub-commands, to determine the available models, layouts,
 ## variants, and options
-#keyboard:
-#  model: pc105
-#  layout: gb
-#  variant:
-#  options: ctrl:nocaps
+keyboard:
+  model: pc105
+  layout: us
+  variant:
+  options: ctrl:nocaps
 
 # Controls password authentication with the SSH daemon; the default here can
 # prevent logging into SSH with a password. Changing this is a security risk
 # and you should at the very least ensure a different default password is
 # specified above
-#ssh_pwauth: false
+ssh_pwauth: true
 
 ## On first boot, use ssh-import-id to give the specific users SSH access to
 ## the default user
@@ -47,31 +47,28 @@
 
 ## Add users and groups to the system, and import keys with the ssh-import-id
 ## utility
-#groups:
-#- robot: [robot]
+groups:
+  - eatabit: [eatabit]
 #- robotics: [robot]
 #- pi
 #
-#users:
-#- default
-#- name: robot
-#  gecos: Mr. Robot
-#  primary_group: robot
-#  groups: users
-#  ssh_import_id: foobar
-#  lock_passwd: false
-#  passwd: $5$hkui88$nvZgIle31cNpryjRfO9uArF7DYiBcWEnjqq7L1AQNN3
+users:
+  - default
+  - name: eatabit
+    gecos: "eatabit User"
+    primary_group: eatabit
+    groups: users
+    ssh_import_id: []
+    lock_passwd: false
+    plain_text_passwd: alq119
 
 ## Update apt database and upgrade packages on first boot
-#package_update: true
-#package_upgrade: true
+package_update: true
+package_upgrade: true
 
 ## Install additional packages on first boot
-#packages:
-#- avahi-daemon
-#- rng-tools
-#- python3-gpiozero
-#- [python3-serial, 3.5-1]
+packages:
+  - at
 
 ## Write arbitrary files to the file-system (including binaries!)
 #write_files:
@@ -97,6 +94,5 @@
 #  permissions: '0644'
 
 ## Run arbitrary commands at rc.local like time
-#runcmd:
-#- [ ls, -l, / ]
-#- [ sh, -xc, "echo $(date) ': hello world!'" ]
+runcmd:
+  - ["/usr/local/bin/iot-provision.sh"]
