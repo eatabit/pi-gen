@@ -10,3 +10,4 @@ archive/*
 *.pem
 *.key
 *.crt
+.DS_Store

@@ -20,7 +20,7 @@ const DEVICE_ID = fs
   .readFileSync("/proc/cpuinfo", "utf8")
   .match(/Serial\s*:\s*(\w+)/)[1]; // Pi serial
 const VERSION = "1.0.0";
-const AWS_DEVICE_FILE = `${EATABIT_LIB_DIR}/conf/device.json`;
+const AWS_DEVICE_FILE = `${EATABIT_LIB_DIR}/conf/aws-device.json`;
 
 const LOG_FILE = `${EATABIT_LIB_DIR}/log/provision.log`;
 
@@ -136,6 +136,7 @@ async function run() {
         fs.writeFileSync(TARGET_CERT_PATH, certPem + "\n");
         fs.writeFileSync(TARGET_KEY_PATH, privateKey + "\n");
 
+        // Set ownership and permissions
         execSync(
           `sudo chown mosquitto:mosquitto ${TARGET_CERT_PATH} ${TARGET_KEY_PATH}`
         );
@@ -143,6 +144,13 @@ async function run() {
         execSync(`sudo chmod 600 ${TARGET_KEY_PATH}`);
 
         log("New certificate and private key saved and permissions set");
+
+        // Update mosquitto AWS config with new DEVICE_ID
+        execSync(
+          `sed -i "s/DEVICE_ID/${DEVICE_ID}/g" "/etc/mosquitto/conf.d/mosquitto-aws.conf"`
+        );
+
+        log("Mosquitto AWS config updated with new DEVICE_ID");
 
         // Step 2: Register the thing
         const registerPayload = {
@@ -171,22 +179,6 @@ async function run() {
       // Save response
       fs.writeFileSync(AWS_DEVICE_FILE, message);
       log(`Registration response saved to ${AWS_DEVICE_FILE}`);
-
-      // Copy and configure mosquitto config
-      try {
-        execSync(
-          `sudo cp ${EATABIT_LIB_DIR}/mosquitto/aws.conf /etc/mosquitto/conf.d/aws.conf`
-        );
-        execSync(
-          `sudo sed -i 's/DEVICE_ID/${DEVICE_ID}/g' /etc/mosquitto/conf.d/aws.conf`
-        );
-        execSync("sudo systemctl restart mosquitto");
-
-        log("Mosquitto configuration updated and service restarted");
-      } catch (err) {
-        log(`Failed to configure mosquitto: ${err.message}`, "ERROR");
-      }
-
       log("Provisioning completed successfully");
       connection.disconnect();
     } else if (topic === TOPIC_REGISTER_REJECTED) {
