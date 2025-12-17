@@ -1,0 +1,8 @@
+IMG_NAME="raspios-trixie-armh64"
+PI_GEN_RELEASE="eatabitv001"
+RELEASE="trixie"
+DEPLOY_COMPRESSION="none"
+STAGE_LIST="stage0 stage1 stage2 stage3"
+ENABLE_SSH="1"
+ENABLE_CLOUD_INIT="1"
+export EATABIT_ROOT_DIR="/usr/local/lib/eatabit"
