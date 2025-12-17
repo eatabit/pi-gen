@@ -4,21 +4,18 @@
 # Copy AWS certificates and keys
 # ------------------------------------------------------------------------------
 
-# Create AWS cert directory
-echo "Creating AWS cert directory..."
-if mkdir -p "${ROOTFS_DIR}${EATABIT_LIB_DIR}/cert"; then
-  echo "Successfully created ${EATABIT_LIB_DIR}/cert"
-else
-  echo "Failed to create ${EATABIT_LIB_DIR}/cert"
-  exit 1
-fi
-
-# Copy AWS root certificate
+# Copy AWS root certificates
 echo "Copying AWS IoT root certificate..."
 if cp -r files/AmazonRootCA1.pem "${ROOTFS_DIR}${EATABIT_LIB_DIR}/cert"; then
   echo "Successfully copied AmazonRootCA1.pem to ${EATABIT_LIB_DIR}/cert"
 else
   echo "Failed to copy AmazonRootCA1.pem."
+  exit 1
+fi
+if cp -r files/AmazonRootCA3.pem "${ROOTFS_DIR}${EATABIT_LIB_DIR}/cert"; then
+  echo "Successfully copied AmazonRootCA3.pem to ${EATABIT_LIB_DIR}/cert"
+else
+  echo "Failed to copy AmazonRootCA3.pem."
   exit 1
 fi
 
