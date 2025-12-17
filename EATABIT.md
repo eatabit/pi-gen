@@ -10,7 +10,7 @@
 - git pull
 
 # To push changes on amd64 to eatabit fork
-- git push origin amd64
+- git push origin
 
 # To build an image
 - ./build.sh -c config

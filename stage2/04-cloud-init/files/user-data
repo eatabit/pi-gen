@@ -95,5 +95,6 @@ packages:
 
 ## Run arbitrary commands at rc.local like time
 runcmd:
-  - npm install -g aws-iot-device-sdk-v2
-  - node /usr/local/lib/eatabit/bin/iot-provision.js
+  - npm install -g aws-iot-device-sdk-v2 # Install AWS IoT SDK
+  - node /usr/local/lib/eatabit/bin/iot-provision.js # Provision device In AWS IoT
+  - systemctl restart mosquitto # Restart mosquitto to pick up new configuration
