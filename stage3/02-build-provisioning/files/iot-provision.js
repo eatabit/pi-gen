@@ -6,10 +6,10 @@ const { execSync } = require("child_process");
 const { mqtt, io, iot } = require("aws-iot-device-sdk-v2");
 
 // Eatabit library directory
-const EATABIT_LIB_DIR = "/usr/local/lib/eatabit";
+const EATABIT_ROOT_DIR = "/usr/local/lib/eatabit";
 
 // Claim cert paths (bootstrap)
-const EATABIT_CERT_PATH = `${EATABIT_LIB_DIR}/cert`;
+const EATABIT_CERT_PATH = `${EATABIT_ROOT_DIR}/cert`;
 const CLAIM_CERT = `${EATABIT_CERT_PATH}/71cc32e68839f91c3d1f96f5ad42e27bf3450c735b8eb928ebb9a0bfb9fb7235-certificate.pem.crt`;
 const CLAIM_KEY = `${EATABIT_CERT_PATH}/71cc32e68839f91c3d1f96f5ad42e27bf3450c735b8eb928ebb9a0bfb9fb7235-private.pem.key`;
 const ROOT_CA = `${EATABIT_CERT_PATH}/AmazonRootCA1.pem`;
@@ -20,9 +20,9 @@ const DEVICE_ID = fs
   .readFileSync("/proc/cpuinfo", "utf8")
   .match(/Serial\s*:\s*(\w+)/)[1]; // Pi serial
 const VERSION = "1.0.0";
-const AWS_DEVICE_FILE = `${EATABIT_LIB_DIR}/conf/aws-device.json`;
+const AWS_DEVICE_FILE = `${EATABIT_ROOT_DIR}/conf/aws-device.json`;
 
-const LOG_FILE = `${EATABIT_LIB_DIR}/log/provision.log`;
+const LOG_FILE = `${EATABIT_ROOT_DIR}/log/provision.log`;
 
 // Topic shortcuts
 const TOPIC_CERT_CREATE = "$aws/certificates/create/json";
