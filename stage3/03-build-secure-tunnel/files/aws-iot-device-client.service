@@ -1,0 +1,12 @@
+[Unit]
+Description=AWS IoT Device Client
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/aws-iot-device-client --config-file /etc/aws-iot-device-client/config.json
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

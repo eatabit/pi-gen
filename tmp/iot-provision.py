@@ -20,16 +20,16 @@ def get_device_serial():
 
 
 # Paths to your provisioning claim (bootstrap) credentials
-EATABIT_LIB_DIR = "/usr/local/lib/eatabit"
-CLAIM_CERT = f"{EATABIT_LIB_DIR}/cert/71cc32e68839f91c3d1f96f5ad42e27bf3450c735b8eb928ebb9a0bfb9fb7235-certificate.pem.crt"
-CLAIM_KEY = f"{EATABIT_LIB_DIR}/cert/71cc32e68839f91c3d1f96f5ad42e27bf3450c735b8eb928ebb9a0bfb9fb7235-private.pem.key"
-ROOT_CA = f"{EATABIT_LIB_DIR}/cert/AmazonRootCA1.pem"
+EATABIT_DIR = "/usr/local/lib/eatabit"
+CLAIM_CERT = f"{EATABIT_DIR}/cert/71cc32e68839f91c3d1f96f5ad42e27bf3450c735b8eb928ebb9a0bfb9fb7235-certificate.pem.crt"
+CLAIM_KEY = f"{EATABIT_DIR}/cert/71cc32e68839f91c3d1f96f5ad42e27bf3450c735b8eb928ebb9a0bfb9fb7235-private.pem.key"
+ROOT_CA = f"{EATABIT_DIR}/cert/AmazonRootCA1.pem"
 ENDPOINT = "a75p0fsmm0h6r-ats.iot.us-east-1.amazonaws.com"
 CLIENT_ID = get_device_serial()
 TEMPLATE_NAME = "templateProvisioning"
 
 # Directories to save new certs/keys
-CERT_DIR = f"{EATABIT_LIB_DIR}/cert"
+CERT_DIR = f"{EATABIT_DIR}/cert"
 os.makedirs(CERT_DIR, exist_ok=True)
 
 

@@ -6,23 +6,26 @@ const { execSync } = require("child_process");
 const { mqtt, io, iot } = require("aws-iot-device-sdk-v2");
 
 // Eatabit library directory
-const EATABIT_LIB_DIR = "/usr/local/lib/eatabit";
+const EATABIT_DIR = "/etc/eatabit";
+
+// AWS SDK client configuration file
+const AWS_CLIENT_CONFIG_FILE = "/etc/aws-iot-device-client/config.json";
 
 // Claim cert paths (bootstrap)
-const EATABIT_CERT_PATH = `${EATABIT_LIB_DIR}/cert`;
+const EATABIT_CERT_PATH = `${EATABIT_DIR}/cert`;
 const CLAIM_CERT = `${EATABIT_CERT_PATH}/71cc32e68839f91c3d1f96f5ad42e27bf3450c735b8eb928ebb9a0bfb9fb7235-certificate.pem.crt`;
 const CLAIM_KEY = `${EATABIT_CERT_PATH}/71cc32e68839f91c3d1f96f5ad42e27bf3450c735b8eb928ebb9a0bfb9fb7235-private.pem.key`;
 const ROOT_CA = `${EATABIT_CERT_PATH}/AmazonRootCA1.pem`;
 
-const ENDPOINT = "a3fw1u2gvi2uac-ats.iot.us-east-2.amazonaws.com";
+const AWS_IOT_ENDPOINT = "a3fw1u2gvi2uac-ats.iot.us-east-2.amazonaws.com";
 const TEMPLATE_NAME = "templateProvisioning";
 const DEVICE_ID = fs
   .readFileSync("/proc/cpuinfo", "utf8")
   .match(/Serial\s*:\s*(\w+)/)[1]; // Pi serial
 const VERSION = "1.0.0";
-const AWS_DEVICE_FILE = `${EATABIT_LIB_DIR}/conf/aws-device.json`;
+const AWS_DEVICE_FILE = `${EATABIT_DIR}/conf/aws-device.json`;
 
-const LOG_FILE = `${EATABIT_LIB_DIR}/log/provision.log`;
+const LOG_FILE = `${EATABIT_DIR}/log/provision.log`;
 
 // Topic shortcuts
 const TOPIC_CERT_CREATE = "$aws/certificates/create/json";
@@ -32,8 +35,8 @@ const TOPIC_REGISTER = `$aws/provisioning-templates/${TEMPLATE_NAME}/provision/j
 const TOPIC_REGISTER_ACCEPTED = `$aws/provisioning-templates/${TEMPLATE_NAME}/provision/json/accepted`;
 const TOPIC_REGISTER_REJECTED = `$aws/provisioning-templates/${TEMPLATE_NAME}/provision/json/rejected`;
 
-const TARGET_CERT_PATH = "/etc/mosquitto/certs/certificate.pem";
-const TARGET_KEY_PATH = "/etc/mosquitto/certs/private.key";
+const TARGET_CERT_PATH = `${EATABIT_DIR}/cert/device-certificate.pem`;
+const TARGET_KEY_PATH = `${EATABIT_DIR}/cert/device-private.key`;
 
 // Ensure log directory and file exist
 try {
@@ -59,7 +62,7 @@ function log(message, level = "INFO") {
   }
 }
 
-log(`Starting provisioning with broker: ${ENDPOINT}`);
+log(`Starting provisioning with broker: ${AWS_ENDPOINT}`);
 
 function decodePayload(payload) {
   try {
@@ -91,7 +94,7 @@ async function run() {
       CLAIM_KEY
     );
   configBuilder.with_certificate_authority_from_path(undefined, ROOT_CA);
-  configBuilder.with_endpoint(ENDPOINT);
+  configBuilder.with_endpoint(AWS_ENDPOINT);
   configBuilder.with_client_id(DEVICE_ID);
   configBuilder.with_clean_session(true);
 
@@ -136,21 +139,21 @@ async function run() {
         fs.writeFileSync(TARGET_CERT_PATH, certPem + "\n");
         fs.writeFileSync(TARGET_KEY_PATH, privateKey + "\n");
 
-        // Set ownership and permissions
-        execSync(
-          `sudo chown mosquitto:mosquitto ${TARGET_CERT_PATH} ${TARGET_KEY_PATH}`
+        log("New certificate and private key saved");
+
+        // Update the AWS IoT Device Client config
+        let clientConfig = fs.readFileSync(AWS_CLIENT_CONFIG_FILE, "utf8");
+        clientConfig = clientConfig.replace(
+          "AWS_IOT_ENDPOINT",
+          AWS_IOT_ENDPOINT
         );
-        execSync(`sudo chmod 644 ${TARGET_CERT_PATH}`);
-        execSync(`sudo chmod 600 ${TARGET_KEY_PATH}`);
+        clientConfig = clientConfig.replace("DEVICE_CERT", TARGET_CERT_PATH);
+        clientConfig = clientConfig.replace("DEVICE_KEY", TARGET_KEY_PATH);
+        clientConfig = clientConfig.replace("ROOT_CA", ROOT_CA);
+        clientConfig = clientConfig.replace("DEVICE_ID", DEVICE_ID);
+        fs.writeFileSync(AWS_CLIENT_CONFIG_FILE, clientConfig, "utf8");
 
-        log("New certificate and private key saved and permissions set");
-
-        // Update mosquitto AWS config with new DEVICE_ID
-        execSync(
-          `sed -i "s/DEVICE_ID/${DEVICE_ID}/g" "/etc/mosquitto/conf.d/mosquitto-aws.conf"`
-        );
-
-        log("Mosquitto AWS config updated with new DEVICE_ID");
+        log("AWS IoT Device Client configuration updated");
 
         // Step 2: Register the thing
         const registerPayload = {

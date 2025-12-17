@@ -1,6 +1,10 @@
 build-essential
-mosquitto 
-mosquitto-clients
 nodejs 
 npm
 libssl-dev
+openssh-server
+git
+cmake
+libcurl4-openssl-dev
+libwebsockets-dev
+zlib1g-dev
