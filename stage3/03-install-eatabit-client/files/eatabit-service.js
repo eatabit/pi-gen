@@ -63,9 +63,46 @@ try {
   process.exit(1);
 }
 
-const JOBS_NOTIFY_TOPIC = `$aws/things/${DEVICE_ID}/jobs/notify`;
+// Job topics (inbound)
+const JOB_TOPICS = [
+  `$aws/things/${DEVICE_ID}/jobs/notify`,
+  `$aws/things/${DEVICE_ID}/jobs/get`,
+  `$aws/things/${DEVICE_ID}/jobs/get/accepted`,
+  `$aws/things/${DEVICE_ID}/jobs/get/rejected`,
+  `$aws/things/${DEVICE_ID}/jobs/+/get`,
+  `$aws/things/${DEVICE_ID}/jobs/+/get/accepted`,
+  `$aws/things/${DEVICE_ID}/jobs/+/update`,
+];
+
+// Events topic (outbound)
+const EVENTS_TOPIC = `eatabit/things/${DEVICE_ID}/events`;
 
 log(`Starting Eatabit AWS IoT Client for device: ${DEVICE_ID}`);
+
+// Global connection reference for publishing
+let mqttConnection;
+
+// Helper function to publish events
+async function publishEvent(eventType, eventData) {
+  if (!mqttConnection) {
+    log("Cannot publish event: MQTT connection not established", "ERROR");
+    return;
+  }
+
+  try {
+    const payload = JSON.stringify({
+      deviceId: DEVICE_ID,
+      timestamp: new Date().toISOString(),
+      eventType,
+      data: eventData,
+    });
+
+    await mqttConnection.publish(EVENTS_TOPIC, payload, mqtt.QoS.AtLeastOnce);
+    log(`Published event: ${eventType} to ${EVENTS_TOPIC}`);
+  } catch (err) {
+    log(`Failed to publish event: ${err.message}`, "ERROR");
+  }
+}
 
 async function main() {
   const clientBootstrap = new io.ClientBootstrap();
@@ -86,9 +123,14 @@ async function main() {
   const client = new mqtt.MqttClient(clientBootstrap);
   const connection = client.new_connection(config);
 
+  // Store connection globally for publishing
+  mqttConnection = connection;
+
   // Connection event handlers
-  connection.on("connect", () => {
+  connection.on("connect", async () => {
     log("Connected to AWS IoT Core");
+    // Publish connection event
+    await publishEvent("connected", { status: "online" });
   });
 
   connection.on("interrupt", (error) => {
@@ -118,11 +160,30 @@ async function main() {
 
       // Parse and handle job notification
       const data = JSON.parse(message);
-      if (data.jobs && data.jobs.length > 0) {
-        log(`Active jobs: ${data.jobs.length}`);
-        data.jobs.forEach((job) => {
-          log(`Job ID: ${job.jobId}, Status: ${job.status}`);
-        });
+
+      // Handle job notifications
+      if (topic.includes("/jobs/notify")) {
+        if (data.jobs && data.jobs.length > 0) {
+          log(`Active jobs: ${data.jobs.length}`);
+          data.jobs.forEach((job) => {
+            log(`Job ID: ${job.jobId}, Status: ${job.status}`);
+          });
+        }
+      }
+
+      // Handle job get responses
+      if (topic.includes("/jobs/get/accepted")) {
+        if (data.inProgressJobs && data.inProgressJobs.length > 0) {
+          log(`In-progress jobs: ${data.inProgressJobs.length}`);
+        }
+        if (data.queuedJobs && data.queuedJobs.length > 0) {
+          log(`Queued jobs: ${data.queuedJobs.length}`);
+        }
+      }
+
+      // Handle job get rejected
+      if (topic.includes("/jobs/get/rejected")) {
+        log(`Job get rejected: ${JSON.stringify(data)}`, "ERROR");
       }
     } catch (err) {
       log(`Failed to process message: ${err.message}`, "ERROR");
@@ -134,21 +195,25 @@ async function main() {
     log(`Connecting to ${ENDPOINT}...`);
     await connection.connect();
 
-    // Subscribe to jobs notify topic
-    log(`Subscribing to ${JOBS_NOTIFY_TOPIC}`);
-    await connection.subscribe(JOBS_NOTIFY_TOPIC, mqtt.QoS.AtLeastOnce);
-    log("Successfully subscribed to jobs notifications");
+    // Subscribe to all job topics
+    for (const topic of JOB_TOPICS) {
+      log(`Subscribing to ${topic}`);
+      await connection.subscribe(topic, mqtt.QoS.AtLeastOnce);
+    }
+    log("Successfully subscribed to all job topics");
 
     // Keep the connection alive
     await new Promise((resolve) => {
       process.on("SIGINT", async () => {
         log("Received SIGINT, disconnecting...");
+        await publishEvent("disconnected", { reason: "SIGINT" });
         await connection.disconnect();
         resolve();
       });
 
       process.on("SIGTERM", async () => {
         log("Received SIGTERM, disconnecting...");
+        await publishEvent("disconnected", { reason: "SIGTERM" });
         await connection.disconnect();
         resolve();
       });
