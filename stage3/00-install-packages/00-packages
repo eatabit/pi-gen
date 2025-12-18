@@ -1,6 +1,2 @@
-build-essential
-mosquitto 
-mosquitto-clients
 nodejs 
 npm
-libssl-dev

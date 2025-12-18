@@ -14,7 +14,7 @@ const CLAIM_CERT = `${EATABIT_CERT_PATH}/71cc32e68839f91c3d1f96f5ad42e27bf3450c7
 const CLAIM_KEY = `${EATABIT_CERT_PATH}/71cc32e68839f91c3d1f96f5ad42e27bf3450c735b8eb928ebb9a0bfb9fb7235-private.pem.key`;
 const ROOT_CA = `${EATABIT_CERT_PATH}/AmazonRootCA1.pem`;
 
-const ENDPOINT = "a3fw1u2gvi2uac-ats.iot.us-east-2.amazonaws.com";
+const AWS_IOT_ENDPOINT = "a3fw1u2gvi2uac-ats.iot.us-east-2.amazonaws.com";
 const TEMPLATE_NAME = "templateProvisioning";
 const DEVICE_ID = fs
   .readFileSync("/proc/cpuinfo", "utf8")
@@ -32,8 +32,8 @@ const TOPIC_REGISTER = `$aws/provisioning-templates/${TEMPLATE_NAME}/provision/j
 const TOPIC_REGISTER_ACCEPTED = `$aws/provisioning-templates/${TEMPLATE_NAME}/provision/json/accepted`;
 const TOPIC_REGISTER_REJECTED = `$aws/provisioning-templates/${TEMPLATE_NAME}/provision/json/rejected`;
 
-const TARGET_CERT_PATH = "/etc/mosquitto/certs/certificate.pem";
-const TARGET_KEY_PATH = "/etc/mosquitto/certs/private.key";
+const TARGET_CERT_PATH = `${EATABIT_CERT_PATH}/device.pem`;
+const TARGET_KEY_PATH = `${EATABIT_CERT_PATH}/device.key`;
 
 // Ensure log directory and file exist
 try {
@@ -59,7 +59,7 @@ function log(message, level = "INFO") {
   }
 }
 
-log(`Starting provisioning with broker: ${ENDPOINT}`);
+log(`Starting provisioning with broker: ${AWS_IOT_ENDPOINT}`);
 
 function decodePayload(payload) {
   try {
@@ -91,7 +91,7 @@ async function run() {
       CLAIM_KEY
     );
   configBuilder.with_certificate_authority_from_path(undefined, ROOT_CA);
-  configBuilder.with_endpoint(ENDPOINT);
+  configBuilder.with_endpoint(AWS_IOT_ENDPOINT);
   configBuilder.with_client_id(DEVICE_ID);
   configBuilder.with_clean_session(true);
 
@@ -136,21 +136,7 @@ async function run() {
         fs.writeFileSync(TARGET_CERT_PATH, certPem + "\n");
         fs.writeFileSync(TARGET_KEY_PATH, privateKey + "\n");
 
-        // Set ownership and permissions
-        execSync(
-          `sudo chown mosquitto:mosquitto ${TARGET_CERT_PATH} ${TARGET_KEY_PATH}`
-        );
-        execSync(`sudo chmod 644 ${TARGET_CERT_PATH}`);
-        execSync(`sudo chmod 600 ${TARGET_KEY_PATH}`);
-
-        log("New certificate and private key saved and permissions set");
-
-        // Update mosquitto AWS config with new DEVICE_ID
-        execSync(
-          `sed -i "s/DEVICE_ID/${DEVICE_ID}/g" "/etc/mosquitto/conf.d/mosquitto-aws.conf"`
-        );
-
-        log("Mosquitto AWS config updated with new DEVICE_ID");
+        log("New certificate and private key saved");
 
         // Step 2: Register the thing
         const registerPayload = {

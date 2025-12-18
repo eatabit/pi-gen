@@ -95,6 +95,16 @@ packages:
 
 ## Run arbitrary commands at rc.local like time
 runcmd:
+  - |
+    # Store device ID from CPU serial
+    DEVICE_ID=$(awk '/Serial/ {print $3}' /proc/cpuinfo)
+    if [ -n "$DEVICE_ID" ]; then
+      echo "$DEVICE_ID" > /usr/local/lib/eatabit/deviceid
+      chmod 644 /usr/local/lib/eatabit/deviceid
+      echo "Device ID stored: $DEVICE_ID"
+    else
+      echo "Warning: Could not read device ID from /proc/cpuinfo"
+    fi
   - npm install -g aws-iot-device-sdk-v2 # Install AWS IoT SDK
   - node /usr/local/lib/eatabit/bin/iot-provision.js # Provision device In AWS IoT
-  - systemctl restart mosquitto # Restart mosquitto to pick up new configuration
+  - reboot # Reboot
