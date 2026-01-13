@@ -16,7 +16,7 @@ const LOG_FILE = `${EATABIT_DIR}/log/mqtt-client.log`;
 const JOBS_DIR = "/tmp";
 
 // Job statuses
-JOB_STATUSES = {
+JOB_EXECUTION_STATUSES = {
   IN_PROGRESS: "IN_PROGRESS",
   SUCCEEDED: "SUCCEEDED",
   FAILED: "FAILED", // Can be retried
@@ -154,10 +154,6 @@ function checkPrinterStatus() {
       { encoding: "utf8", shell: "/bin/bash" }
     ).trim();
 
-    if (!onlineStatus || !offlineCause || !paperStatus) {
-      return { ready: false, reason: "Printer not responding" };
-    }
-
     const offlineByte = parseInt(offlineCause, 16);
     const paperByte = parseInt(paperStatus, 16);
 
@@ -194,15 +190,15 @@ function downloadDocument(filePath) {
       throw new Error(JOB_EVENTS.EXPIRED);
     }
 
-    log(`Downloading job ${jobId} from URI: ${jobDownloadUri}`);
+    log(`Downloading job ${jobId} body from URI: ${jobDownloadUri}`);
 
-    // Download directly to file to preserve binary data
-    const outputFile = path.join(JOBS_DIR, `${jobId}.escpos`);
-    execSync(`curl -s "${jobDownloadUri}" -o "${outputFile}"`, {
+    // Download the job body document using curl
+    const escposJobPath = path.join(JOBS_DIR, `${jobId}.escpos`);
+    execSync(`curl -s "${jobDownloadUri}" -o "${escposJobPath}"`, {
       shell: "/bin/bash",
     });
 
-    log(`Job ${jobId} downloaded successfully to ${outputFile}`);
+    log(`Job ${jobId} downloaded successfully to ${escposJobPath}`);
 
     return JOB_EVENTS.DOWNLOADED;
   } catch (err) {
@@ -376,7 +372,7 @@ async function main() {
             log(`Job ${jobId} has expired and will be rejected`);
 
             const rejectedPayload = JSON.stringify({
-              status: JOB_STATUSES.REJECTED,
+              status: JOB_EXECUTION_STATUSES.REJECTED,
               statusDetails: {
                 event: JOB_EVENTS.EXPIRED,
               },
@@ -406,7 +402,7 @@ async function main() {
 
           // Update job execution status to IN_PROGRESS
           const successPayload = JSON.stringify({
-            status: JOB_STATUSES.IN_PROGRESS,
+            status: JOB_EXECUTION_STATUSES.IN_PROGRESS,
             statusDetails: {
               event: JOB_EVENTS.QUEUED,
             },
@@ -457,7 +453,7 @@ async function main() {
 
         // Handle job based on jobStatus
         switch (jobStatus) {
-          case JOB_STATUSES.IN_PROGRESS:
+          case JOB_EXECUTION_STATUSES.IN_PROGRESS:
             log(`Job ${jobId} in progress`);
 
             switch (jobEvent) {
@@ -470,7 +466,7 @@ async function main() {
                 // Handle DOWNLOADED job
                 if (downloadResult === JOB_EVENTS.DOWNLOADED) {
                   const downloadedPayload = JSON.stringify({
-                    status: JOB_STATUSES.IN_PROGRESS,
+                    status: JOB_EXECUTION_STATUSES.IN_PROGRESS,
                     statusDetails: {
                       event: JOB_EVENTS.DOWNLOADED,
                     },
@@ -499,7 +495,7 @@ async function main() {
                   );
 
                   const printerOfflinePayload = JSON.stringify({
-                    status: JOB_STATUSES.FAILED,
+                    status: JOB_EXECUTION_STATUSES.FAILED,
                     statusDetails: {
                       event: JOB_EVENTS.PRINTER_OFFLINE,
                       reason: printResult,
@@ -513,16 +509,17 @@ async function main() {
                   connection.publish(
                     `$aws/things/${DEVICE_ID}/jobs/${jobId}/update`,
                     printerOfflinePayload,
-                    mqtt.QoS.AtLeastOnce
+                    mqtt.QoS.AtLeastOnceƒ
                   );
 
                   return;
                 }
 
                 const printedPayload = JSON.stringify({
-                  status: JOB_STATUSES.SUCCEEDED,
+                  status: JOB_EXECUTION_STATUSES.SUCCEEDED,
                   statusDetails: {
                     event: JOB_EVENTS.PRINTED,
+                    jobId,
                   },
                   expectedVersion: jobVersionNumber,
                   includeJobExecutionState: true,
@@ -604,11 +601,7 @@ async function main() {
   }
 }
 
-main()
-  .then(() => {
-    processJobStatusUpdates();
-  })
-  .catch((err) => {
-    log(err.message, "FATAL");
-    process.exit(1);
-  });
+main().catch((err) => {
+  log(err.message, "FATAL");
+  process.exit(1);
+});
