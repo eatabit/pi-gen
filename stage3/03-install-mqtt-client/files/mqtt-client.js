@@ -91,14 +91,12 @@ try {
 
 // Job topics (inbound)
 const JOB_TOPICS = [
-  `$aws/things/${DEVICE_ID}/jobs/notify`,
-  `$aws/things/${DEVICE_ID}/jobs/get`,
-  `$aws/things/${DEVICE_ID}/jobs/get/accepted`,
-  `$aws/things/${DEVICE_ID}/jobs/get/rejected`,
-  `$aws/things/${DEVICE_ID}/jobs/+/get`,
-  `$aws/things/${DEVICE_ID}/jobs/+/get/accepted`,
-  `$aws/things/${DEVICE_ID}/jobs/+/get/rejected`,
+  `$aws/things/${DEVICE_ID}/jobs/notify-next`,
+  `$aws/things/${DEVICE_ID}/jobs/start-next/accepted`,
+  `$aws/things/${DEVICE_ID}/jobs/start-next/rejected`,
   `$aws/things/${DEVICE_ID}/jobs/+/update`,
+  `$aws/things/${DEVICE_ID}/jobs/+/update/accepted`,
+  `$aws/things/${DEVICE_ID}/jobs/+/update/rejected`,
 ];
 
 // Events topic (outbound)
@@ -281,18 +279,46 @@ async function main() {
   // Connection event handlers
   connection.on("connect", async () => {
     log("Connected to AWS IoT Core");
-    // Publish connection event
-    await publishEvent("connected", { status: "online" });
+
+    // Publish an empty JSON payload to request the next job
+    try {
+      await connection.publish(
+        `$aws/things/${DEVICE_ID}/jobs/start-next`,
+        JSON.stringify({}),
+        mqtt.QoS.AtLeastOnce
+      );
+
+      log(
+        `Published start-next request to $aws/things/${DEVICE_ID}/jobs/start-next`
+      );
+    } catch (err) {
+      log(`Failed to publish start-next: ${err.message}`, "ERROR");
+    }
   });
 
   connection.on("interrupt", (error) => {
     log(`Connection interrupted: ${error}`, "WARN");
   });
 
-  connection.on("resume", (return_code, session_present) => {
+  connection.on("resume", async (return_code, session_present) => {
     log(
       `Connection resumed. Return code: ${return_code}, Session present: ${session_present}`
     );
+
+    // Publish an empty JSON payload to request the next job
+    try {
+      await connection.publish(
+        `$aws/things/${DEVICE_ID}/jobs/start-next`,
+        JSON.stringify({}),
+        mqtt.QoS.AtLeastOnce
+      );
+
+      log(
+        `Published start-next request to $aws/things/${DEVICE_ID}/jobs/start-next`
+      );
+    } catch (err) {
+      log(`Failed to publish start-next: ${err.message}`, "ERROR");
+    }
   });
 
   connection.on("disconnect", () => {
@@ -313,54 +339,43 @@ async function main() {
       // Parse and handle job notification
       const data = JSON.parse(message);
 
-      // Handle job notifications
-      if (topic.includes("/jobs/notify")) {
-        if (data.jobs?.QUEUED && data.jobs?.QUEUED.length > 0) {
-          log(`Active jobs: ${data.jobs.QUEUED.length}`);
-          data.jobs.QUEUED.forEach((job) => {
-            log(`Job ID: ${job.jobId}, Status: ${job.status}`);
-
-            // Fetch job details
-            connection.publish(
-              `$aws/things/${DEVICE_ID}/jobs/${job.jobId}/get`,
-              "",
-              mqtt.QoS.AtLeastOnce
-            );
-          });
-        }
-      }
-
-      /* 
-        Handle messages received on $aws/things/{thingName}/jobs/{jobId}/get/accepted
+      /*
+        Handle message on $aws/things/{thingName}/jobs/notify-next OR $aws/things/thingName/jobs/start-next/accepted
 
         Sample message structure:
         {
-          "clientToken" : "client-001",
-          "timestamp" : 1489097434407,
+          "timestamp" : 10011,
           "execution" : {
-            "approximateSecondsBeforeTimedOut": number,
-            "jobId" : "023",
-            "status" : "QUEUED",
-            "queuedAt" : 1489097374841,
-            "lastUpdatedAt" : 1489097374841,
+            "jobId" : "other-job",
+            "status" : "IN_PROGRESS",
+            "queuedAt" : 10009,
+            "lastUpdatedAt" : 10009,
             "versionNumber" : 1,
-            "jobDocument" : {
-              "uri": S3 presigned URL,
-              "objectName": "body.txt",
-              "expiresAt": 1767887630
-            }
+            "executionNumber" : 1,
+            "jobDocument" : {"c":"d"}
           }
         }
       */
 
-      if (topic.match(/\/jobs\/.+\/get\/accepted$/)) {
-        log(`Processing job get accepted message: ${JSON.stringify(data)}`);
+      if (
+        topic.includes("/jobs/start-next/accepted") ||
+        topic.includes("/jobs/notify-next")
+      ) {
+        log(
+          `Job notification: ${data.execution.jobId}, Status: ${data.execution.status}`
+        );
 
         const jobId = data.execution?.jobId;
-        const versionNumber = data.execution?.versionNumber;
+        const jobVersionNumber = data.execution?.versionNumber;
         const jobExpiresAt = data.execution?.jobDocument.expiresAt;
 
-        if (jobId && versionNumber && jobExpiresAt) {
+        // Early out if no job is available
+        if (!jobId) {
+          log("No job available at this time");
+          return;
+        }
+
+        if (jobId && jobVersionNumber && jobExpiresAt) {
           log(`Processing job ID: ${jobId}`);
 
           // If the job has expired, throw EXPIRED error
@@ -372,7 +387,7 @@ async function main() {
             log(`Job ${jobId} has expired and will be rejected`);
 
             const rejectedPayload = JSON.stringify({
-              status: JOB_EXECUTION_STATUSES.REJECTED,
+              status: JOB_EXECUTION_STATUSES.FAILED,
               statusDetails: {
                 event: JOB_EVENTS.EXPIRED,
               },
@@ -406,7 +421,7 @@ async function main() {
             statusDetails: {
               event: JOB_EVENTS.QUEUED,
             },
-            expectedVersion: versionNumber,
+            expectedVersion: jobVersionNumber,
             includeJobExecutionState: true,
             includeJobDocument: false,
             clientToken: jobId, // Use jobId as clientToken
@@ -540,27 +555,13 @@ async function main() {
 
             break;
           default:
-            log(`Job ${jobId}: ${jobStatus}`);
+            // For SUCCEEDED, FAILED, REJECTED - clean up job files
+            log(`Job ${jobId}: ${jobStatus}, cleaning up files`);
 
             // Remove Job files
             fs.unlinkSync(path.join(JOBS_DIR, `${jobId}.json`));
             fs.unlinkSync(path.join(JOBS_DIR, `${jobId}.escpos`));
         }
-      }
-
-      // Handle job get responses
-      if (topic.includes("/jobs/get/accepted")) {
-        if (data.inProgressJobs && data.inProgressJobs.length > 0) {
-          log(`In-progress jobs: ${data.inProgressJobs.length}`);
-        }
-        if (data.queuedJobs && data.queuedJobs.length > 0) {
-          log(`Queued jobs: ${data.queuedJobs.length}`);
-        }
-      }
-
-      // Handle job get rejected
-      if (topic.includes("/jobs/get/rejected")) {
-        log(`Job get rejected: ${JSON.stringify(data)}`, "ERROR");
       }
     } catch (err) {
       log(`Failed to process message: ${err.message}`, "ERROR");
