@@ -32,3 +32,6 @@
 # Rebuild mqtt-client
 - cd /usr/local/lib/eatabit/bin && systemctl stop mqtt-client && rm ./mqtt-client.js && nano ./mqtt-client.js
 - chmod +x ./mqtt-client.js && systemctl daemon-reload && systemctl start mqtt-client && tail -f /usr/local/lib/eatabit/log/mqtt-client.log
+
+# local SSH 
+- ssh -i ~/.ssh/id_raspberry eatabit@192.168.1.78 

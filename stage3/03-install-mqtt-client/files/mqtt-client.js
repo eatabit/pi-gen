@@ -4,6 +4,7 @@ const fs = require("fs");
 const path = require("path");
 const { mqtt, io, iot } = require("aws-iot-device-sdk-v2");
 const { execSync } = require("child_process");
+const ngrok = require("@ngrok/ngrok");
 
 // Configuration
 const EATABIT_DIR = "/usr/local/lib/eatabit";
@@ -14,6 +15,7 @@ const ROOT_CA = `${CERT_PATH}/AmazonRootCA1.pem`;
 const ENDPOINT = "a3fw1u2gvi2uac-ats.iot.us-east-2.amazonaws.com";
 const LOG_FILE = `${EATABIT_DIR}/log/mqtt-client.log`;
 const JOBS_DIR = "/tmp";
+const HEALTH_JSON_PATH = "/usr/local/lib/eatabit/health.json";
 
 // Job statuses
 JOB_EXECUTION_STATUSES = {
@@ -90,13 +92,16 @@ try {
 }
 
 // Job topics (inbound)
-const JOB_TOPICS = [
+const SUBSCRIBE_TOPICS = [
   `$aws/things/${DEVICE_ID}/jobs/notify-next`,
   `$aws/things/${DEVICE_ID}/jobs/start-next/accepted`,
   `$aws/things/${DEVICE_ID}/jobs/start-next/rejected`,
   `$aws/things/${DEVICE_ID}/jobs/+/update`,
   `$aws/things/${DEVICE_ID}/jobs/+/update/accepted`,
   `$aws/things/${DEVICE_ID}/jobs/+/update/rejected`,
+  // `$aws/things/${DEVICE_ID}/shadow/name/user`,
+  // `$aws/things/${DEVICE_ID}/shadow/name/admin`,
+  `$aws/commands/things/${DEVICE_ID}/executions/+/request/json`,
 ];
 
 // Events topic (outbound)
@@ -106,6 +111,9 @@ log(`Starting Eatabit AWS IoT Client for device: ${DEVICE_ID}`);
 
 // Global connection reference for publishing
 let mqttConnection;
+
+// Global ngrok listener reference
+let ngrokListener = null;
 
 // Helper function to publish events
 async function publishEvent(eventType, eventData) {
@@ -126,6 +134,46 @@ async function publishEvent(eventType, eventData) {
     log(`Published event: ${eventType} to ${EVENTS_TOPIC}`);
   } catch (err) {
     log(`Failed to publish event: ${err.message}`, "ERROR");
+  }
+}
+
+// Helper function to publish health data from health.json file
+async function publishHealthData() {
+  if (!mqttConnection) {
+    log("Cannot publish health data: MQTT connection not established", "ERROR");
+    return;
+  }
+
+  try {
+    // Read health JSON file
+    if (!fs.existsSync(HEALTH_JSON_PATH)) {
+      log(`Health data file not found at ${HEALTH_JSON_PATH}`, "WARN");
+      await publishEvent("health_data_error", {
+        error: "Health data file not found",
+        path: HEALTH_JSON_PATH,
+      });
+      return;
+    }
+
+    const healthContent = fs.readFileSync(HEALTH_JSON_PATH, "utf8");
+    const healthData = JSON.parse(healthContent);
+
+    // Publish health data as event
+    const payload = JSON.stringify({
+      deviceId: DEVICE_ID,
+      timestamp: new Date().toISOString(),
+      eventType: "health_report",
+      data: healthData,
+    });
+
+    await mqttConnection.publish(EVENTS_TOPIC, payload, mqtt.QoS.AtLeastOnce);
+    log(`Published health data to ${EVENTS_TOPIC}`);
+  } catch (err) {
+    log(`Failed to publish health data: ${err.message}`, "ERROR");
+    await publishEvent("health_data_error", {
+      error: err.message,
+      path: HEALTH_JSON_PATH,
+    });
   }
 }
 
@@ -151,6 +199,13 @@ function checkPrinterStatus() {
       `printf "\\x10\\x04\\x04" > /dev/usb/lp0 && timeout 1s dd if=/dev/usb/lp0 bs=1 count=1 2>/dev/null | xxd -p`,
       { encoding: "utf8", shell: "/bin/bash" }
     ).trim();
+
+    const onlineByte = parseInt(onlineStatus, 16);
+
+    // If printer is online (bit 3 = 0) return ready
+    if ((onlineByte & 0x08) === 0) {
+      return { ready: true, reason: "Printer is ready" };
+    }
 
     const offlineByte = parseInt(offlineCause, 16);
     const paperByte = parseInt(paperStatus, 16);
@@ -330,7 +385,7 @@ async function main() {
   });
 
   // Message handler
-  connection.on("message", (topic, payload) => {
+  connection.on("message", async (topic, payload) => {
     try {
       const message = Buffer.from(payload).toString("utf8");
       log(`Received message on topic: ${topic}`);
@@ -361,10 +416,6 @@ async function main() {
         topic.includes("/jobs/start-next/accepted") ||
         topic.includes("/jobs/notify-next")
       ) {
-        log(
-          `Job notification: ${data.execution.jobId}, Status: ${data.execution.status}`
-        );
-
         const jobId = data.execution?.jobId;
         const jobVersionNumber = data.execution?.versionNumber;
         const jobExpiresAt = data.execution?.jobDocument.expiresAt;
@@ -374,6 +425,10 @@ async function main() {
           log("No job available at this time");
           return;
         }
+
+        log(
+          `Job notification: ${data.execution.jobId}, Status: ${data.execution.status}`
+        );
 
         if (jobId && jobVersionNumber && jobExpiresAt) {
           log(`Processing job ID: ${jobId}`);
@@ -563,6 +618,169 @@ async function main() {
             fs.unlinkSync(path.join(JOBS_DIR, `${jobId}.escpos`));
         }
       }
+
+      /*
+        Handle message on $aws/commands/things/{thingName}/executions/+request/JSON
+
+        Sample message structure:
+        {
+          "commandId": "SetTemperature",
+          "namespace": "AWS-IoT",
+          "payloadTemplate": "{\"temperature\": \"${aws:iot:commandexecution::parameter:temperature}\"}",
+          "parameters": [
+            {
+              "name": "temperature",
+              "type": "INTEGER",
+              "valueConditions": [
+                {
+                  "comparisonOperator": "IN_RANGE",
+                  "operand": {
+                    "numberRange": {
+                      "min": "60",
+                      "max": "80"
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      */
+
+      if (
+        topic.match(/\/commands\/things\/.+\/executions\/.+\/request\/json$/i)
+      ) {
+        log(`Processing command execution request: ${JSON.stringify(data)}`);
+
+        const command = data.command;
+        const executionId = topic.split("/")[5];
+
+        log(
+          `Command execution request received. Command ID: ${command} with Execution ID: ${executionId}`
+        );
+
+        // Handle startNgrokTunnel command
+        if (command === "startNgrokTunnel") {
+          const authToken = data.authToken;
+
+          if (!authToken) {
+            log(
+              "startNgrokTunnel command missing authToken parameter",
+              "ERROR"
+            );
+            return;
+          }
+
+          log("Starting ngrok SSH forwarding...");
+
+          try {
+            // Close existing ngrok listener if any
+            if (ngrokListener) {
+              log("Closing existing ngrok connection...");
+              await ngrokListener.close();
+              ngrokListener = null;
+            }
+
+            // Start ngrok forwarding for SSH on port 22
+            ngrokListener = await ngrok.forward({
+              addr: 22,
+              authtoken: authToken,
+              proto: "tcp",
+            });
+
+            const ngrokUrl = ngrokListener.url();
+            log(`ngrok SSH forwarding established: ${ngrokUrl}`, "INFO");
+
+            // Publish SUCCESS event to $aws/commands/clients/<DEVICE_ID>/executions/<executionId>/response/json
+            const successPayload = JSON.stringify({
+              status: JOB_EXECUTION_STATUSES.SUCCEEDED,
+              statusReason: {
+                reasonCode: "200",
+                reasonDescription: "Tunnel established successfully",
+              },
+              result: {
+                ngrokUrl: { s: ngrokUrl },
+              },
+            });
+
+            connection.publish(
+              `$aws/commands/clients/${DEVICE_ID}/executions/${executionId}/response/json`,
+              successPayload,
+              mqtt.QoS.AtLeastOnce
+            );
+          } catch (err) {
+            log(
+              `Failed to establish ngrok SSH forwarding: ${err.message}`,
+              "ERROR"
+            );
+
+            // Publish FAILED event to $aws/commands/clients/<DEVICE_ID>/executions/<executionId>/response/json
+            const failedPayload = JSON.stringify({
+              status: JOB_EXECUTION_STATUSES.FAILED,
+              statusReason: {
+                reasonCode: "500",
+                reasonDescription: "Failed to establish tunnel",
+              },
+              result: {},
+            });
+
+            connection.publish(
+              `$aws/commands/clients/${DEVICE_ID}/executions/${executionId}/response/json`,
+              failedPayload,
+              mqtt.QoS.AtLeastOnce
+            );
+          }
+        }
+
+        // Handle stopNgrokTunnel command
+        if (command === "stopNgrokTunnel") {
+          log("Stopping ngrok SSH forwarding...");
+
+          try {
+            if (ngrokListener) {
+              await ngrokListener.close();
+              ngrokListener = null;
+              log("ngrok SSH forwarding stopped", "INFO");
+
+              // Publish SUCCESS event to $aws/commands/clients/<DEVICE_ID>/executions/<executionId>/response/json
+              const successPayload = JSON.stringify({
+                status: JOB_EXECUTION_STATUSES.SUCCEEDED,
+                statusReason: {
+                  reasonCode: "200",
+                  reasonDescription: "Tunnel stopped successfully",
+                },
+                result: {},
+              });
+
+              connection.publish(
+                `$aws/commands/clients/${DEVICE_ID}/executions/${executionId}/response/json`,
+                successPayload,
+                mqtt.QoS.AtLeastOnce
+              );
+            } else {
+              log("No active ngrok SSH forwarding to stop", "WARN");
+            }
+          } catch (err) {
+            log(`Failed to stop ngrok SSH forwarding: ${err.message}`, "ERROR");
+
+            // Publish failure event
+            const failedPayload = JSON.stringify({
+              status: JOB_EXECUTION_STATUSES.FAILED,
+              statusReason: {
+                reasonCode: "500",
+                reasonDescription: "Failed to stop tunnel",
+              },
+              result: {},
+            });
+
+            connection.publish(
+              `$aws/commands/clients/${DEVICE_ID}/executions/${executionId}/response/json`,
+              failedPayload,
+              mqtt.QoS.AtLeastOnce
+            );
+          }
+        }
+      }
     } catch (err) {
       log(`Failed to process message: ${err.message}`, "ERROR");
     }
@@ -574,16 +792,23 @@ async function main() {
     await connection.connect();
 
     // Subscribe to all job topics
-    for (const topic of JOB_TOPICS) {
+    for (const topic of SUBSCRIBE_TOPICS) {
       log(`Subscribing to ${topic}`);
       await connection.subscribe(topic, mqtt.QoS.AtLeastOnce);
     }
     log("Successfully subscribed to all job topics");
 
-    // Keep the connection alive
+    // Start health data publishing every 15 minutes (900000 ms)
+    // First publish immediately
+    await publishHealthData();
+
+    const healthInterval = setInterval(async () => {
+      await publishHealthData();
+    }, 900000); // 15 minutes
     await new Promise((resolve) => {
       process.on("SIGINT", async () => {
         log("Received SIGINT, disconnecting...");
+        clearInterval(healthInterval);
         await publishEvent("disconnected", { reason: "SIGINT" });
         await connection.disconnect();
         resolve();
@@ -591,6 +816,7 @@ async function main() {
 
       process.on("SIGTERM", async () => {
         log("Received SIGTERM, disconnecting...");
+        clearInterval(healthInterval);
         await publishEvent("disconnected", { reason: "SIGTERM" });
         await connection.disconnect();
         resolve();
