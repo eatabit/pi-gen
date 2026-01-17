@@ -2,7 +2,6 @@
 
 const fs = require("fs");
 const path = require("path");
-const { execSync } = require("child_process");
 const { mqtt, io, iot } = require("aws-iot-device-sdk-v2");
 
 // Eatabit library directory
@@ -165,6 +164,16 @@ async function run() {
       // Save response
       fs.writeFileSync(AWS_DEVICE_FILE, message);
       log(`Registration response saved to ${AWS_DEVICE_FILE}`);
+      
+      // Delete claim certificate and key
+      try {
+        fs.unlinkSync(CLAIM_CERT);
+        fs.unlinkSync(CLAIM_KEY);
+        log("Claim certificate and key deleted");
+      } catch (err) {
+        log(`Warning: Failed to delete claim credentials: ${err.message}`, "WARN");
+      }
+      
       log("Provisioning completed successfully");
       connection.disconnect();
     } else if (topic === TOPIC_REGISTER_REJECTED) {

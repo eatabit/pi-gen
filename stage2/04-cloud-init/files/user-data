@@ -37,7 +37,7 @@ keyboard:
 # prevent logging into SSH with a password. Changing this is a security risk
 # and you should at the very least ensure a different default password is
 # specified above
-ssh_pwauth: true
+ssh_pwauth: false
 
 ## On first boot, use ssh-import-id to give the specific users SSH access to
 ## the default user
@@ -60,7 +60,8 @@ users:
     groups: users
     ssh_import_id: []
     lock_passwd: false
-    plain_text_passwd: alq119
+    ssh_authorized_keys:
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAk9TNZAcNV1DbLw3NG6yXV0PqWTe73seoog3q9FlsBR ssh@eatabit.com
 
 ## Update apt database and upgrade packages on first boot
 package_update: true
@@ -106,40 +107,7 @@ runcmd:
       echo "Warning: Could not read device ID from /proc/cpuinfo"
     fi
 
-  - |
-    # Wait for USB printer to be detected (up to 30 seconds)
-    for i in {1..30}; do
-      if [ -e /dev/usb/lp0 ]; then
-        echo "USB printer detected"
-        break
-      fi
-      sleep 1
-    done
-    
-    # Detect printer URI
-    PRINTER_URI=$(lpinfo -v | grep -i usb | head -n1 | awk '{print $2}')
-    
-    if [ -n "$PRINTER_URI" ]; then
-      echo "Found printer at: $PRINTER_URI"
-      
-      # Add printer to CUPS
-      lpadmin -p thermal_printer \
-        -v "$PRINTER_URI" \
-        -E \
-        -m raw
-      
-      # Set as default printer
-      lpoptions -d thermal_printer
-      
-      # Enable and accept jobs
-      cupsenable thermal_printer
-      cupsaccept thermal_printer
-      
-      echo "Thermal printer configured in CUPS"
-    else
-      echo "Warning: No USB printer detected"
-    fi
-
-  - npm install -g aws-iot-device-sdk-v2 # Install AWS IoT SDK
+  - npm install -g aws-iot-device-sdk-v2 # AWS IoT SDK
+  - npm install -g @ngrok/ngrok # Ngrok package
   - node /usr/local/lib/eatabit/bin/iot-provision.js # Provision device In AWS IoT
   - reboot # Reboot
