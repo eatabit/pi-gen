@@ -16,11 +16,12 @@
 - ./build-docker.sh
 
 # SCP command
-- scp -o "StrictHostKeyChecking=no" -o "UserKnownHostsFile=/dev/null" stage3/03-install-eatabit-client/files/eatabit-service.js eatabit@192.168.1.78:/usr/local/lib/eatabit/bin/eatabit-service.js
+- scp -i ~/.ssh/id_raspberry -o "StrictHostKeyChecking=no" -o "UserKnownHostsFile=/dev/null" stage3/09-print-image/files/connected.txt eatabit@192.168.1.78:/tmp/connected.txt
 
 # Test print
 - echo "Test print" > /dev/usb/lp0
 - echo "<md>TEST PRINT</md>" > /dev/usb/lp0
+- 
 
 # Tail the mqtt-client service log
 - tail -f /usr/local/lib/eatabit/log/mqtt-client.log
@@ -35,3 +36,50 @@
 
 # local SSH 
 - ssh -i ~/.ssh/id_raspberry eatabit@192.168.1.78 
+
+# Tail the ble-server log
+- tail -f /usr/local/lib/eatabit/log/ble-config.log
+- journalctl -u ble-config -b
+
+# This displays detailed information about the Bluetooth adapter(s)
+- bluetoothctl show
+
+# Rebuild ble-config
+- cd /usr/local/lib/eatabit/bin && systemctl stop ble-config && rm ./ble-config.js && nano ./ble-config.js
+- chmod +x ./ble-config.js && systemctl daemon-reload && systemctl start ble-config && tail -f /usr/local/lib/eatabit/log/ble-config.log
+
+# Command to connect to wifi
+- nmcli dev wifi connect "ClearPilled" password "9ncx6xwix8jke"
+
+# List wifi networks
+- nmcli dev wifi list
+
+# Send a Reset DeviceCommand
+- aws dynamodb put-item \
+  --table-name DeviceCommand-zuanr4qgbnd7zfoxsjnjkeouxi-NONE \
+  --region us-east-2 \
+  --item '{
+    "id": {"S": "8826dd27-f247-4a26-abf3-497ad4b53601"},
+    "deviceId": {"S": "a06fe35f-bd76-49dc-af57-db843a189164"},
+    "commandId": {"S": "reset"},
+    "createdAt": {"S": "'$(date -u +'%Y-%m-%dT%H:%M:%SZ')'"},
+    "state": {"S": "sent"},
+    "parameters": {"M": {"reboot": {"BOOL": true}}}
+  }' \
+  --profile iot
+
+# Send a Reboot DeviceCommand
+- aws dynamodb put-item \
+  --table-name DeviceCommand-zuanr4qgbnd7zfoxsjnjkeouxi-NONE \
+  --region us-east-2 \
+  --item '{
+    "id": {"S": "8826dd27-f243-4a26-abf3-497ad4b53601"},
+    "deviceId": {"S": "a06fe35f-bd76-49dc-af57-db843a189164"},
+    "commandId": {"S": "reboot"},
+    "createdAt": {"S": "'$(date -u +'%Y-%m-%dT%H:%M:%SZ')'"},
+    "state": {"S": "sent"}
+  }' \
+  --profile iot
+
+# View the log for the device-reset service
+- journalctl -u device-reset -f

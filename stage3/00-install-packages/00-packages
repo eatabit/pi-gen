@@ -2,3 +2,6 @@ nodejs
 npm
 xxd
 ufw
+bluetooth 
+bluez 
+python3-bluez

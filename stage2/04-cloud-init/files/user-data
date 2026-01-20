@@ -97,6 +97,18 @@ packages:
 ## Run arbitrary commands at rc.local like time
 runcmd:
   - |
+    # Configure Bluetooth for BLE peripheral mode
+    cat >> /etc/bluetooth/main.conf << 'BT_EOF'
+
+    # Eatabit BLE Configuration
+    [General]
+    InitiallyPowered = true
+    DiscoverableTimeout = 0
+    PairableTimeout = 0
+    Pairable = false
+    BT_EOF
+
+  - |
     # Store device ID from CPU serial
     DEVICE_ID=$(awk '/Serial/ {print $3}' /proc/cpuinfo)
     if [ -n "$DEVICE_ID" ]; then
@@ -109,5 +121,6 @@ runcmd:
 
   - npm install -g aws-iot-device-sdk-v2 # AWS IoT SDK
   - npm install -g @ngrok/ngrok # Ngrok package
+  - npm install -g @abandonware/bleno # BLE package
   - node /usr/local/lib/eatabit/bin/iot-provision.js # Provision device In AWS IoT
   - reboot # Reboot
