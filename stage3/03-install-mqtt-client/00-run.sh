@@ -36,8 +36,11 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/usr/local/lib/eatabit/log /tmp
+ReadWritePaths=/usr/local/lib/eatabit/log /tmp /usr/local/lib/eatabit/reset
 ReadOnlyPaths=/usr/local/lib/eatabit/cert /usr/local/lib/eatabit/conf
+CPUAccounting=true
+MemoryAccounting=true
+TasksAccounting=true
 
 [Install]
 WantedBy=multi-user.target

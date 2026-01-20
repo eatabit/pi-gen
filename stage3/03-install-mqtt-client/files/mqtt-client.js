@@ -99,8 +99,6 @@ const SUBSCRIBE_TOPICS = [
   `$aws/things/${DEVICE_ID}/jobs/+/update`,
   `$aws/things/${DEVICE_ID}/jobs/+/update/accepted`,
   `$aws/things/${DEVICE_ID}/jobs/+/update/rejected`,
-  // `$aws/things/${DEVICE_ID}/shadow/name/user`,
-  // `$aws/things/${DEVICE_ID}/shadow/name/admin`,
   `$aws/commands/things/${DEVICE_ID}/executions/+/request/json`,
 ];
 
@@ -187,17 +185,17 @@ function checkPrinterStatus() {
   try {
     const onlineStatus = execSync(
       `printf "\\x10\\x04\\x01" > /dev/usb/lp0 && timeout 1s dd if=/dev/usb/lp0 bs=1 count=1 2>/dev/null | xxd -p`,
-      { encoding: "utf8", shell: "/bin/bash" }
+      { encoding: "utf8", shell: "/bin/bash" },
     ).trim();
 
     const offlineCause = execSync(
       `printf "\\x10\\x04\\x02" > /dev/usb/lp0 && timeout 1s dd if=/dev/usb/lp0 bs=1 count=1 2>/dev/null | xxd -p`,
-      { encoding: "utf8", shell: "/bin/bash" }
+      { encoding: "utf8", shell: "/bin/bash" },
     ).trim();
 
     const paperStatus = execSync(
       `printf "\\x10\\x04\\x04" > /dev/usb/lp0 && timeout 1s dd if=/dev/usb/lp0 bs=1 count=1 2>/dev/null | xxd -p`,
-      { encoding: "utf8", shell: "/bin/bash" }
+      { encoding: "utf8", shell: "/bin/bash" },
     ).trim();
 
     const onlineByte = parseInt(onlineStatus, 16);
@@ -315,7 +313,7 @@ async function main() {
   const configBuilder =
     iot.AwsIotMqttConnectionConfigBuilder.new_mtls_builder_from_path(
       DEVICE_CERT,
-      DEVICE_KEY
+      DEVICE_KEY,
     );
 
   configBuilder.with_certificate_authority_from_path(undefined, ROOT_CA);
@@ -340,11 +338,11 @@ async function main() {
       await connection.publish(
         `$aws/things/${DEVICE_ID}/jobs/start-next`,
         JSON.stringify({}),
-        mqtt.QoS.AtLeastOnce
+        mqtt.QoS.AtLeastOnce,
       );
 
       log(
-        `Published start-next request to $aws/things/${DEVICE_ID}/jobs/start-next`
+        `Published start-next request to $aws/things/${DEVICE_ID}/jobs/start-next`,
       );
     } catch (err) {
       log(`Failed to publish start-next: ${err.message}`, "ERROR");
@@ -357,7 +355,7 @@ async function main() {
 
   connection.on("resume", async (return_code, session_present) => {
     log(
-      `Connection resumed. Return code: ${return_code}, Session present: ${session_present}`
+      `Connection resumed. Return code: ${return_code}, Session present: ${session_present}`,
     );
 
     // Publish an empty JSON payload to request the next job
@@ -365,11 +363,11 @@ async function main() {
       await connection.publish(
         `$aws/things/${DEVICE_ID}/jobs/start-next`,
         JSON.stringify({}),
-        mqtt.QoS.AtLeastOnce
+        mqtt.QoS.AtLeastOnce,
       );
 
       log(
-        `Published start-next request to $aws/things/${DEVICE_ID}/jobs/start-next`
+        `Published start-next request to $aws/things/${DEVICE_ID}/jobs/start-next`,
       );
     } catch (err) {
       log(`Failed to publish start-next: ${err.message}`, "ERROR");
@@ -427,7 +425,7 @@ async function main() {
         }
 
         log(
-          `Job notification: ${data.execution.jobId}, Status: ${data.execution.status}`
+          `Job notification: ${data.execution.jobId}, Status: ${data.execution.status}`,
         );
 
         if (jobId && jobVersionNumber && jobExpiresAt) {
@@ -455,7 +453,7 @@ async function main() {
             connection.publish(
               `$aws/things/${DEVICE_ID}/jobs/${jobId}/update`,
               rejectedPayload,
-              mqtt.QoS.AtLeastOnce
+              mqtt.QoS.AtLeastOnce,
             );
 
             log(`Job ${jobId} rejected due to expiration`);
@@ -485,7 +483,7 @@ async function main() {
           connection.publish(
             `$aws/things/${DEVICE_ID}/jobs/${jobId}/update`,
             successPayload,
-            mqtt.QoS.AtLeastOnce
+            mqtt.QoS.AtLeastOnce,
           );
         } else {
           log(`Invalid job document or job ID in message`, "ERROR");
@@ -518,7 +516,7 @@ async function main() {
         const jobVersionNumber = data.executionState?.versionNumber;
 
         log(
-          `Job update accepted with status: ${jobStatus}, event: ${jobEvent}`
+          `Job update accepted with status: ${jobStatus}, event: ${jobEvent}`,
         );
 
         // Handle job based on jobStatus
@@ -530,7 +528,7 @@ async function main() {
               case JOB_EVENTS.QUEUED:
                 // Download the document
                 const downloadResult = downloadDocument(
-                  path.join(JOBS_DIR, `${jobId}.json`)
+                  path.join(JOBS_DIR, `${jobId}.json`),
                 );
 
                 // Handle DOWNLOADED job
@@ -549,7 +547,7 @@ async function main() {
                   connection.publish(
                     `$aws/things/${DEVICE_ID}/jobs/${jobId}/update`,
                     downloadedPayload,
-                    mqtt.QoS.AtLeastOnce
+                    mqtt.QoS.AtLeastOnce,
                   );
                 }
 
@@ -561,7 +559,7 @@ async function main() {
                 // Handle PRINTER_OFFLINE events
                 if (printResult in PRINTER_EVENTS) {
                   log(
-                    `Job ${jobId} cannot be printed due to printer issue: ${printResult}`
+                    `Job ${jobId} cannot be printed due to printer issue: ${printResult}`,
                   );
 
                   const printerOfflinePayload = JSON.stringify({
@@ -579,7 +577,7 @@ async function main() {
                   connection.publish(
                     `$aws/things/${DEVICE_ID}/jobs/${jobId}/update`,
                     printerOfflinePayload,
-                    mqtt.QoS.AtLeastOnceƒ
+                    mqtt.QoS.AtLeastOnceƒ,
                   );
 
                   return;
@@ -600,7 +598,7 @@ async function main() {
                 connection.publish(
                   `$aws/things/${DEVICE_ID}/jobs/${jobId}/update`,
                   printedPayload,
-                  mqtt.QoS.AtLeastOnce
+                  mqtt.QoS.AtLeastOnce,
                 );
 
                 break;
@@ -652,21 +650,21 @@ async function main() {
       ) {
         log(`Processing command execution request: ${JSON.stringify(data)}`);
 
-        const command = data.command;
+        const commandId = data.commandId;
         const executionId = topic.split("/")[5];
 
         log(
-          `Command execution request received. Command ID: ${command} with Execution ID: ${executionId}`
+          `Command execution request received. Command ID: ${commandId} with Execution ID: ${executionId}`,
         );
 
         // Handle startNgrokTunnel command
-        if (command === "startNgrokTunnel") {
+        if (commandId === "startNgrokTunnel") {
           const authToken = data.authToken;
 
           if (!authToken) {
             log(
               "startNgrokTunnel command missing authToken parameter",
-              "ERROR"
+              "ERROR",
             );
             return;
           }
@@ -691,7 +689,7 @@ async function main() {
             const ngrokUrl = ngrokListener.url();
             log(`ngrok SSH forwarding established: ${ngrokUrl}`, "INFO");
 
-            // Publish SUCCESS event to $aws/commands/clients/<DEVICE_ID>/executions/<executionId>/response/json
+            // Publish SUCCESS event to $aws/commands/things/<DEVICE_ID>/executions/<executionId>/response/json
             const successPayload = JSON.stringify({
               status: JOB_EXECUTION_STATUSES.SUCCEEDED,
               statusReason: {
@@ -704,17 +702,17 @@ async function main() {
             });
 
             connection.publish(
-              `$aws/commands/clients/${DEVICE_ID}/executions/${executionId}/response/json`,
+              `$aws/commands/things/${DEVICE_ID}/executions/${executionId}/response/json`,
               successPayload,
-              mqtt.QoS.AtLeastOnce
+              mqtt.QoS.AtLeastOnce,
             );
           } catch (err) {
             log(
               `Failed to establish ngrok SSH forwarding: ${err.message}`,
-              "ERROR"
+              "ERROR",
             );
 
-            // Publish FAILED event to $aws/commands/clients/<DEVICE_ID>/executions/<executionId>/response/json
+            // Publish FAILED event to $aws/commands/things/<DEVICE_ID>/executions/<executionId>/response/json
             const failedPayload = JSON.stringify({
               status: JOB_EXECUTION_STATUSES.FAILED,
               statusReason: {
@@ -725,15 +723,15 @@ async function main() {
             });
 
             connection.publish(
-              `$aws/commands/clients/${DEVICE_ID}/executions/${executionId}/response/json`,
+              `$aws/commands/things/${DEVICE_ID}/executions/${executionId}/response/json`,
               failedPayload,
-              mqtt.QoS.AtLeastOnce
+              mqtt.QoS.AtLeastOnce,
             );
           }
         }
 
         // Handle stopNgrokTunnel command
-        if (command === "stopNgrokTunnel") {
+        if (commandId === "stopNgrokTunnel") {
           log("Stopping ngrok SSH forwarding...");
 
           try {
@@ -742,7 +740,7 @@ async function main() {
               ngrokListener = null;
               log("ngrok SSH forwarding stopped", "INFO");
 
-              // Publish SUCCESS event to $aws/commands/clients/<DEVICE_ID>/executions/<executionId>/response/json
+              // Publish SUCCESS event to $aws/commands/things/<DEVICE_ID>/executions/<executionId>/response/json
               const successPayload = JSON.stringify({
                 status: JOB_EXECUTION_STATUSES.SUCCEEDED,
                 statusReason: {
@@ -753,9 +751,9 @@ async function main() {
               });
 
               connection.publish(
-                `$aws/commands/clients/${DEVICE_ID}/executions/${executionId}/response/json`,
+                `$aws/commands/things/${DEVICE_ID}/executions/${executionId}/response/json`,
                 successPayload,
-                mqtt.QoS.AtLeastOnce
+                mqtt.QoS.AtLeastOnce,
               );
             } else {
               log("No active ngrok SSH forwarding to stop", "WARN");
@@ -774,9 +772,164 @@ async function main() {
             });
 
             connection.publish(
-              `$aws/commands/clients/${DEVICE_ID}/executions/${executionId}/response/json`,
+              `$aws/commands/things/${DEVICE_ID}/executions/${executionId}/response/json`,
               failedPayload,
-              mqtt.QoS.AtLeastOnce
+              mqtt.QoS.AtLeastOnce,
+            );
+          }
+        }
+
+        /*
+        Handle Reset command
+
+        Reset message structure:
+          {
+            "commandId": "reset",
+            "namespace": "AWS-IoT",
+            "payloadTemplate": "{\"commandId\": \"${aws:iot:commandexecution::parameter:commandId}\",\"reboot\": \"${aws:iot:commandexecution::parameter:reboot}\"}",
+            "parameters": [
+              {
+                "name": "reboot",
+                "type": "BOOLEAN"
+              }
+            ]
+          }
+        */
+
+        if (commandId === "reset") {
+          log("Processing reset command...");
+
+          const reboot = data.reboot === true || data.reboot === "true";
+          const RESET_DIR = "/usr/local/lib/eatabit/reset";
+          const RESET_FLAG = `${RESET_DIR}/.reset-flag`;
+
+          try {
+            // Ensure reset directory exists with proper permissions
+            if (!fs.existsSync(RESET_DIR)) {
+              log("Creating reset directory...");
+              fs.mkdirSync(RESET_DIR, { recursive: true, mode: 0o777 });
+            }
+
+            // Create reset flag
+            log("Setting device reset flag...");
+            fs.writeFileSync(RESET_FLAG, "1", { mode: 0o666 });
+
+            log("Device reset flag set successfully");
+
+            // Publish SUCCESS event
+            const successPayload = JSON.stringify({
+              status: JOB_EXECUTION_STATUSES.SUCCEEDED,
+              statusReason: {
+                reasonCode: "200",
+                reasonDescription: "Reset flag set successfully",
+              },
+              result: {
+                resetFlagSet: { b: true },
+                rebooting: { b: reboot },
+              },
+            });
+
+            connection.publish(
+              `$aws/commands/things/${DEVICE_ID}/executions/${executionId}/response/json`,
+              successPayload,
+              mqtt.QoS.AtLeastOnce,
+            );
+
+            // If reboot requested, reboot after brief delay to ensure response is sent
+            if (reboot) {
+              log("Rebooting device in 5 seconds...");
+              setTimeout(() => {
+                try {
+                  execSync("shutdown -r now", { shell: "/bin/bash" });
+                  log("Reboot command issued");
+                } catch (err) {
+                  log(`Failed to reboot device: ${err.message}`, "ERROR");
+                }
+              }, 5000);
+            }
+          } catch (err) {
+            log(`Failed to process reset command: ${err.message}`, "ERROR");
+
+            // Publish failure event
+            const failedPayload = JSON.stringify({
+              status: JOB_EXECUTION_STATUSES.FAILED,
+              statusReason: {
+                reasonCode: "500",
+                reasonDescription: err.message,
+              },
+              result: {},
+            });
+
+            connection.publish(
+              `$aws/commands/things/${DEVICE_ID}/executions/${executionId}/response/json`,
+              failedPayload,
+              mqtt.QoS.AtLeastOnce,
+            );
+          }
+        }
+
+        /*
+        Handle Reboot command
+
+        Reset message structure:
+          {
+            "commandId": "reboot",
+            "namespace": "AWS-IoT",
+            "payloadTemplate": "{\"commandId\": \"${aws:iot:commandexecution::parameter:commandId}\"}"
+          }
+        */
+
+        if (commandId === "reboot") {
+          log("Processing reboot command...");
+
+          try {
+            // Reboot device
+            log("Rebooting device...");
+
+            // Publish SUCCESS event
+            const successPayload = JSON.stringify({
+              status: JOB_EXECUTION_STATUSES.SUCCEEDED,
+              statusReason: {
+                reasonCode: "200",
+                reasonDescription: "Reboot command processed successfully",
+              },
+              result: {
+                rebooting: { b: true },
+              },
+            });
+
+            connection.publish(
+              `$aws/commands/things/${DEVICE_ID}/executions/${executionId}/response/json`,
+              successPayload,
+              mqtt.QoS.AtLeastOnce,
+            );
+
+            // Reboot after brief delay to ensure response is sent
+            setTimeout(() => {
+              try {
+                execSync("shutdown -r now", { shell: "/bin/bash" });
+                log("Reboot command issued");
+              } catch (err) {
+                log(`Failed to reboot device: ${err.message}`, "ERROR");
+              }
+            }, 5000);
+          } catch (err) {
+            log(`Failed to process reboot command: ${err.message}`, "ERROR");
+
+            // Publish failure event
+            const failedPayload = JSON.stringify({
+              status: JOB_EXECUTION_STATUSES.FAILED,
+              statusReason: {
+                reasonCode: "500",
+                reasonDescription: err.message,
+              },
+              result: {},
+            });
+
+            connection.publish(
+              `$aws/commands/things/${DEVICE_ID}/executions/${executionId}/response/json`,
+              failedPayload,
+              mqtt.QoS.AtLeastOnce,
             );
           }
         }
