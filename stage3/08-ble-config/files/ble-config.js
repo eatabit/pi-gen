@@ -62,6 +62,7 @@ const SSID_CHAR_UUID = "0e2f3e4b-d9e2-4d0c-8a6c-2bbd2f40c3a7";
 const PASSWORD_CHAR_UUID = "9c0fb5a7-6be4-4a38-b5d2-1c8af8d2a0bd";
 const APPLY_CHAR_UUID = "3b1f7d6e-2cda-43c7-8c92-d0f7b8c0b6d2";
 const STATUS_CHAR_UUID = "a2e6d8f3-71ac-4c17-8d79-7d7f4f5c2e43";
+const CONFIG_STATUS_CHAR_UUID = "c4d5e6f7-8a9b-0c1d-2e3f-4a5b6c7d8e9f";
 const SCAN_CHAR_UUID = "b3d4f5e6-7a8b-9c0d-1e2f-3a4b5c6d7e8f";
 
 /**
@@ -135,13 +136,6 @@ initializeLogFile();
 function updateStatus(methodCode, resultCode, detailCode) {
   const statusMessage = `${methodCode}|${resultCode}|${detailCode}`;
   connectionStatus = statusMessage;
-
-  // Log human-readable message
-  const methodNames = { 0: "WiFi", 1: "Scan", 2: "System" };
-  const resultNames = { 0: "FAIL", 1: "SUCCESS", 2: "IN-PROGRESS" };
-  log(
-    `Status update: ${methodNames[methodCode] || methodCode} ${resultNames[resultCode] || resultCode} (detail: ${detailCode})`,
-  );
 
   // Notify all subscribed clients with compact status code
   const statusBuffer = Buffer.from(statusMessage);
@@ -405,6 +399,54 @@ function createStatusCharacteristic() {
 }
 
 /**
+ * Check if device has any configured WiFi networks
+ */
+function hasConfiguredWiFi() {
+  try {
+    const command = "nmcli -t -f TYPE,NAME con show 2>&1";
+    const result = execSync(command, { encoding: "utf8", shell: "/bin/bash" });
+
+    // Filter for WiFi/802-11-wireless connections
+    const wifiConnections = result
+      .split("\n")
+      .filter((line) => line.trim())
+      .filter((line) => {
+        const parts = line.split(":");
+        const type = parts[0] || "";
+        return type === "802-11-wireless" || type === "wifi";
+      });
+
+    return wifiConnections.length > 0;
+  } catch (err) {
+    log(`Failed to check WiFi configuration: ${err.message}`, "ERROR");
+    return false;
+  }
+}
+
+/**
+ * Create Config Status Characteristic (Read)
+ * Returns whether device has configured WiFi networks
+ * Response: "0" = no networks configured (factory reset state), "1" = configured
+ */
+function createConfigStatusCharacteristic() {
+  return new bleno.Characteristic({
+    uuid: CONFIG_STATUS_CHAR_UUID,
+    properties: ["read"],
+    onReadRequest: (offset, callback) => {
+      log("Config status read request");
+
+      const hasConfig = hasConfiguredWiFi();
+      const status = hasConfig ? "1" : "0";
+
+      log(
+        `Config status: ${status} (${hasConfig ? "configured" : "not configured"})`,
+      );
+      callback(bleno.Characteristic.RESULT_SUCCESS, Buffer.from(status));
+    },
+  });
+}
+
+/**
  * Create Scan Characteristic (Read/Notify/Write)
  * Allows clients to request WiFi scan and receive multipart results
  */
@@ -505,6 +547,7 @@ function createWiFiService() {
       createPasswordCharacteristic(),
       createApplyCharacteristic(),
       createStatusCharacteristic(),
+      createConfigStatusCharacteristic(),
       createScanCharacteristic(),
     ],
   });

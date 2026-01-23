@@ -12,6 +12,11 @@ install -D -m 0755 files/mqtt-client.js \
 
 echo "Client script installed to /usr/local/lib/eatabit/bin/mqtt-client.js"
 
+# Create config directory for shadow state persistence
+echo "Creating config directory for shadow persistence..."
+mkdir -p "${ROOTFS_DIR}/usr/local/lib/eatabit/config"
+chmod 777 "${ROOTFS_DIR}/usr/local/lib/eatabit/config"
+
 # Create systemd service unit
 cat > "${ROOTFS_DIR}/etc/systemd/system/mqtt-client.service" << 'EOF'
 [Unit]
@@ -36,7 +41,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/usr/local/lib/eatabit/log /tmp /usr/local/lib/eatabit/reset
+ReadWritePaths=/usr/local/lib/eatabit/log /tmp /usr/local/lib/eatabit/reset /usr/local/lib/eatabit/config
 ReadOnlyPaths=/usr/local/lib/eatabit/cert /usr/local/lib/eatabit/conf
 CPUAccounting=true
 MemoryAccounting=true
