@@ -102,10 +102,11 @@ const PRIVATE_SHADOW_PREFIX = `${TOPIC_PREFIX}/shadow/name/private`;
 const SHADOW_CONFIG = {
   public: {
     name: "public",
-    properties: ["light", "sound"],
+    properties: ["light", "sound", "cutterType"],
     state: {
       light: false,
       sound: false,
+      cutterType: "partial", // "full", "partial", or "none"
     },
   },
   private: {
@@ -116,6 +117,59 @@ const SHADOW_CONFIG = {
     },
   },
 };
+
+// Config file paths
+const CUTTER_CONFIG_FILE = `${EATABIT_DIR}/config/cutter-type.json`;
+
+/**
+ * Watch cutter config file for changes (from BLE service)
+ * When the file changes, update the shadow with the new value
+ */
+function watchCutterConfigFile() {
+  const configDir = path.dirname(CUTTER_CONFIG_FILE);
+
+  // Ensure config directory exists
+  if (!fs.existsSync(configDir)) {
+    fs.mkdirSync(configDir, { recursive: true, mode: 0o777 });
+  }
+
+  // Debounce to prevent multiple triggers
+  let debounceTimer = null;
+
+  fs.watch(configDir, (eventType, filename) => {
+    if (filename === path.basename(CUTTER_CONFIG_FILE)) {
+      // Debounce file change events
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(async () => {
+        try {
+          if (!fs.existsSync(CUTTER_CONFIG_FILE)) return;
+
+          const data = JSON.parse(fs.readFileSync(CUTTER_CONFIG_FILE, "utf8"));
+          if (
+            data.cutterType &&
+            ["partial", "full", "none"].includes(data.cutterType)
+          ) {
+            const currentValue = SHADOW_CONFIG.public.state.cutterType;
+            if (data.cutterType !== currentValue) {
+              log(
+                `Cutter config file changed: ${currentValue} -> ${data.cutterType}`,
+              );
+              SHADOW_CONFIG.public.state.cutterType = data.cutterType;
+              await updateShadowReportedState("public");
+            }
+          }
+        } catch (err) {
+          log(
+            `Failed to process cutter config change: ${err.message}`,
+            "ERROR",
+          );
+        }
+      }, 100);
+    }
+  });
+
+  log("Watching cutter config file for changes");
+}
 
 // Job topics (inbound)
 const SUBSCRIBE_TOPICS = [
@@ -235,7 +289,7 @@ function persistShadowToFile(shadowName) {
         state: shadowConfig.state,
       },
       null,
-      2
+      2,
     );
 
     fs.writeFileSync(filePath, stateData, { mode: 0o666 });
@@ -304,6 +358,11 @@ async function handleShadowDelta(shadowName, desiredState) {
           if (prop === "sound") {
             log(`Sound ${desiredState[prop] ? "enabled" : "disabled"}`);
             // TODO: Implement sound control (e.g., speaker, buzzer)
+          }
+          if (prop === "cutterType") {
+            log(`Cutter type set to: ${desiredState[prop]}`);
+            // Shadow reported state is updated via updateShadowReportedState() below
+            // Config file is only written by BLE service, not cloud-initiated changes
           }
         } else if (shadowName === "private") {
           if (prop === "apiId") {
@@ -481,7 +540,11 @@ async function main() {
     for (const shadowName of Object.keys(SHADOW_CONFIG)) {
       try {
         const topic = `${TOPIC_PREFIX}/shadow/name/${shadowName}/get`;
-        await connection.publish(topic, JSON.stringify({}), mqtt.QoS.AtLeastOnce);
+        await connection.publish(
+          topic,
+          JSON.stringify({}),
+          mqtt.QoS.AtLeastOnce,
+        );
         log(`Requested shadow state for: ${shadowName}`);
       } catch (err) {
         log(`Failed to request shadow ${shadowName}: ${err.message}`, "ERROR");
@@ -1128,6 +1191,9 @@ async function main() {
     log("Initializing shadow reported states...");
     await updateShadowReportedState("public");
     await updateShadowReportedState("private");
+
+    // Watch cutter config file for BLE-initiated changes
+    watchCutterConfigFile();
 
     // Start health data publishing every 15 minutes (900000 ms)
     // First publish immediately

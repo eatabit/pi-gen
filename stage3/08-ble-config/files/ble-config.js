@@ -55,6 +55,47 @@ let currentPassword = "";
 let connectionStatus = "idle"; // idle, connecting, connected, failed
 let statusClients = [];
 let scanClients = [];
+let currentCutterType = "partial"; // default: "partial", "full", or "none"
+
+// Config file paths
+const CUTTER_CONFIG_FILE = `${EATABIT_DIR}/config/cutter-type.json`;
+
+/**
+ * Load cutter type from config file
+ */
+function loadCutterType() {
+  try {
+    if (fs.existsSync(CUTTER_CONFIG_FILE)) {
+      const data = JSON.parse(fs.readFileSync(CUTTER_CONFIG_FILE, "utf8"));
+      if (data.cutterType && ["partial", "full", "none"].includes(data.cutterType)) {
+        currentCutterType = data.cutterType;
+        log(`Loaded cutter type from config: ${currentCutterType}`);
+      }
+    }
+  } catch (err) {
+    log(`Failed to load cutter type: ${err.message}`, "ERROR");
+  }
+}
+
+/**
+ * Save cutter type to config file
+ */
+function saveCutterType(value) {
+  try {
+    const configDir = path.dirname(CUTTER_CONFIG_FILE);
+    if (!fs.existsSync(configDir)) {
+      fs.mkdirSync(configDir, { recursive: true, mode: 0o777 });
+    }
+    fs.writeFileSync(
+      CUTTER_CONFIG_FILE,
+      JSON.stringify({ cutterType: value, timestamp: new Date().toISOString() }, null, 2),
+      { mode: 0o666 }
+    );
+    log(`Saved cutter type to config: ${value}`);
+  } catch (err) {
+    log(`Failed to save cutter type: ${err.message}`, "ERROR");
+  }
+}
 
 // UUIDs for WiFi Configuration Service
 const WIFI_SERVICE_UUID = "8f4c9b0e-5e57-4f9f-9a2a-4b6f8de9a3c1";
@@ -64,6 +105,7 @@ const APPLY_CHAR_UUID = "3b1f7d6e-2cda-43c7-8c92-d0f7b8c0b6d2";
 const STATUS_CHAR_UUID = "a2e6d8f3-71ac-4c17-8d79-7d7f4f5c2e43";
 const CONFIG_STATUS_CHAR_UUID = "c4d5e6f7-8a9b-0c1d-2e3f-4a5b6c7d8e9f";
 const SCAN_CHAR_UUID = "b3d4f5e6-7a8b-9c0d-1e2f-3a4b5c6d7e8f";
+const CUTTER_TYPE_CHAR_UUID = "e1f2a3b4-5c6d-7e8f-9a0b-1c2d3e4f5a6b";
 
 /**
  * Initialize logging
@@ -537,6 +579,34 @@ function createScanCharacteristic() {
 }
 
 /**
+ * Create Cutter Type Characteristic (Read/Write)
+ * Allows clients to get/set the printer cutter type: "partial", "full", or "none"
+ */
+function createCutterTypeCharacteristic() {
+  return new bleno.Characteristic({
+    uuid: CUTTER_TYPE_CHAR_UUID,
+    properties: ["read", "write"],
+    onReadRequest: (offset, callback) => {
+      log(`Cutter type read request, current: ${currentCutterType}`);
+      const buffer = Buffer.from(currentCutterType);
+      callback(bleno.Characteristic.RESULT_SUCCESS, buffer);
+    },
+    onWriteRequest: (data, offset, withoutResponse, callback) => {
+      const value = data.toString("utf8").trim();
+      if (["partial", "full", "none"].includes(value)) {
+        currentCutterType = value;
+        saveCutterType(currentCutterType);
+        log(`Cutter type written: ${currentCutterType}`);
+        callback(bleno.Characteristic.RESULT_SUCCESS);
+      } else {
+        log(`Invalid cutter type value: ${value}`, "ERROR");
+        callback(bleno.Characteristic.RESULT_UNLIKELY_ERROR);
+      }
+    },
+  });
+}
+
+/**
  * Create WiFi Configuration Service
  */
 function createWiFiService() {
@@ -549,6 +619,7 @@ function createWiFiService() {
       createStatusCharacteristic(),
       createConfigStatusCharacteristic(),
       createScanCharacteristic(),
+      createCutterTypeCharacteristic(),
     ],
   });
 }
@@ -627,6 +698,9 @@ async function main() {
     log("Starting Eatabit BLE Configuration Server");
     log(`Device Name: ${DEVICE_NAME}`);
     log(`WiFi Service UUID: ${WIFI_SERVICE_UUID}`);
+
+    // Load cutter type from config file
+    loadCutterType();
 
     initializeBLE();
 
