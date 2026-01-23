@@ -59,7 +59,7 @@
   --table-name DeviceCommand-zuanr4qgbnd7zfoxsjnjkeouxi-NONE \
   --region us-east-2 \
   --item '{
-    "id": {"S": "8826dd27-f247-4a26-abf3-497ad4b53601"},
+    "id": {"S": "8826dd27-f247-4a26-abf3-417ad4b53601"},
     "deviceId": {"S": "a06fe35f-bd76-49dc-af57-db843a189164"},
     "commandId": {"S": "reset"},
     "createdAt": {"S": "'$(date -u +'%Y-%m-%dT%H:%M:%SZ')'"},

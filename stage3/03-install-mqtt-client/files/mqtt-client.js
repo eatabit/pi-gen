@@ -91,15 +91,44 @@ try {
   process.exit(1);
 }
 
+// MQTT topics
+const TOPIC_PREFIX = `$aws/things/${DEVICE_ID}`;
+
+// Shadow topics (outbound)
+const PUBLIC_SHADOW_PREFIX = `${TOPIC_PREFIX}/shadow/name/public`;
+const PRIVATE_SHADOW_PREFIX = `${TOPIC_PREFIX}/shadow/name/private`;
+
+// Shadow configuration
+const SHADOW_CONFIG = {
+  public: {
+    name: "public",
+    properties: ["light", "sound"],
+    state: {
+      light: false,
+      sound: false,
+    },
+  },
+  private: {
+    name: "private",
+    properties: ["apiId"],
+    state: {
+      apiId: "",
+    },
+  },
+};
+
 // Job topics (inbound)
 const SUBSCRIBE_TOPICS = [
-  `$aws/things/${DEVICE_ID}/jobs/notify-next`,
-  `$aws/things/${DEVICE_ID}/jobs/start-next/accepted`,
-  `$aws/things/${DEVICE_ID}/jobs/start-next/rejected`,
-  `$aws/things/${DEVICE_ID}/jobs/+/update`,
-  `$aws/things/${DEVICE_ID}/jobs/+/update/accepted`,
-  `$aws/things/${DEVICE_ID}/jobs/+/update/rejected`,
+  `${TOPIC_PREFIX}/jobs/notify-next`,
+  `${TOPIC_PREFIX}/jobs/start-next/accepted`,
+  `${TOPIC_PREFIX}/jobs/start-next/rejected`,
+  `${TOPIC_PREFIX}/jobs/+/update`,
+  `${TOPIC_PREFIX}/jobs/+/update/accepted`,
+  `${TOPIC_PREFIX}/jobs/+/update/rejected`,
   `$aws/commands/things/${DEVICE_ID}/executions/+/request/json`,
+  // Shadow delta topics
+  `${PUBLIC_SHADOW_PREFIX}/update/delta`,
+  `${PRIVATE_SHADOW_PREFIX}/update/delta`,
 ];
 
 // Events topic (outbound)
@@ -178,6 +207,121 @@ async function publishHealthData() {
 // Helper function to test if a job has expired
 function isJobExpired(expiresAt) {
   return Number(expiresAt) < Math.floor(Date.now() / 1000);
+}
+
+// Helper function to persist shadow state to file
+function persistShadowToFile(shadowName) {
+  try {
+    const shadowConfig = SHADOW_CONFIG[shadowName];
+    if (!shadowConfig) {
+      log(`Unknown shadow: ${shadowName}`, "ERROR");
+      return;
+    }
+
+    const configDir = "/usr/local/lib/eatabit/config";
+    const fileName = `shadow-${shadowName}.json`;
+    const filePath = `${configDir}/${fileName}`;
+
+    // Ensure directory exists
+    if (!fs.existsSync(configDir)) {
+      fs.mkdirSync(configDir, { recursive: true, mode: 0o777 });
+    }
+
+    // Write shadow state to file
+    const stateData = JSON.stringify(
+      {
+        shadowName,
+        timestamp: new Date().toISOString(),
+        state: shadowConfig.state,
+      },
+      null,
+      2
+    );
+
+    fs.writeFileSync(filePath, stateData, { mode: 0o666 });
+    log(`Persisted ${shadowName} shadow to ${filePath}`);
+  } catch (err) {
+    log(`Failed to persist shadow to file: ${err.message}`, "ERROR");
+  }
+}
+
+// Helper function to update shadow reported state
+async function updateShadowReportedState(shadowName) {
+  if (!mqttConnection) {
+    log("Cannot update shadow: MQTT connection not established", "ERROR");
+    return;
+  }
+
+  try {
+    const shadowConfig = SHADOW_CONFIG[shadowName];
+    if (!shadowConfig) {
+      log(`Unknown shadow: ${shadowName}`, "ERROR");
+      return;
+    }
+
+    const reportedState = shadowConfig.state;
+    const payload = JSON.stringify({
+      state: {
+        reported: reportedState,
+      },
+    });
+
+    const topic = `${TOPIC_PREFIX}/shadow/name/${shadowName}/update`;
+    await mqttConnection.publish(topic, payload, mqtt.QoS.AtLeastOnce);
+    log(`Published reported state to shadow: ${shadowName}`);
+
+    // Persist shadow state to file
+    persistShadowToFile(shadowName);
+  } catch (err) {
+    log(`Failed to update shadow state: ${err.message}`, "ERROR");
+  }
+}
+
+// Helper function to handle shadow delta updates
+async function handleShadowDelta(shadowName, desiredState) {
+  try {
+    const shadowConfig = SHADOW_CONFIG[shadowName];
+    if (!shadowConfig) {
+      log(`Unknown shadow: ${shadowName}`, "ERROR");
+      return;
+    }
+
+    log(`Processing delta for ${shadowName} shadow:`, "INFO");
+    log(JSON.stringify(desiredState), "INFO");
+
+    // Update local state with desired state
+    shadowConfig.properties.forEach((prop) => {
+      if (desiredState.hasOwnProperty(prop)) {
+        shadowConfig.state[prop] = desiredState[prop];
+        log(`Updated ${shadowName}.${prop} = ${desiredState[prop]}`, "INFO");
+
+        // Handle property-specific actions
+        if (shadowName === "public") {
+          if (prop === "light") {
+            log(`Light ${desiredState[prop] ? "enabled" : "disabled"}`);
+            // TODO: Implement light control (e.g., GPIO, LED)
+          }
+          if (prop === "sound") {
+            log(`Sound ${desiredState[prop] ? "enabled" : "disabled"}`);
+            // TODO: Implement sound control (e.g., speaker, buzzer)
+          }
+        } else if (shadowName === "private") {
+          if (prop === "apiId") {
+            log(`API ID configured: ${desiredState[prop]}`);
+            // TODO: Store apiId for API authentication
+          }
+        }
+      }
+    });
+
+    // Report updated state back to shadow
+    await updateShadowReportedState(shadowName);
+
+    // Persist shadow state to file
+    persistShadowToFile(shadowName);
+  } catch (err) {
+    log(`Failed to handle shadow delta: ${err.message}`, "ERROR");
+  }
 }
 
 // Printer status check
@@ -333,6 +477,17 @@ async function main() {
   connection.on("connect", async () => {
     log("Connected to AWS IoT Core");
 
+    // Fetch current shadow state for both shadows
+    for (const shadowName of Object.keys(SHADOW_CONFIG)) {
+      try {
+        const topic = `${TOPIC_PREFIX}/shadow/name/${shadowName}/get`;
+        await connection.publish(topic, JSON.stringify({}), mqtt.QoS.AtLeastOnce);
+        log(`Requested shadow state for: ${shadowName}`);
+      } catch (err) {
+        log(`Failed to request shadow ${shadowName}: ${err.message}`, "ERROR");
+      }
+    }
+
     // Publish an empty JSON payload to request the next job
     try {
       await connection.publish(
@@ -389,8 +544,26 @@ async function main() {
       log(`Received message on topic: ${topic}`);
       log(`Message: ${message}`);
 
-      // Parse and handle job notification
+      // Parse and handle message
       const data = JSON.parse(message);
+
+      /*
+        Handle shadow delta messages
+        Topics: $aws/things/{thingName}/shadow/name/{shadowName}/update/delta
+        Contains the state.desired properties that differ from state.reported
+      */
+      if (topic.includes("/shadow/name/") && topic.includes("/update/delta")) {
+        // Extract shadow name from topic
+        const shadowMatch = topic.match(
+          /\/shadow\/name\/([^/]+)\/update\/delta/,
+        );
+        if (shadowMatch) {
+          const shadowName = shadowMatch[1];
+          const desiredState = data.state || {};
+          await handleShadowDelta(shadowName, desiredState);
+        }
+        return;
+      }
 
       /*
         Handle message on $aws/things/{thingName}/jobs/notify-next OR $aws/things/thingName/jobs/start-next/accepted
@@ -949,7 +1122,12 @@ async function main() {
       log(`Subscribing to ${topic}`);
       await connection.subscribe(topic, mqtt.QoS.AtLeastOnce);
     }
-    log("Successfully subscribed to all job topics");
+    log("Successfully subscribed to all topics");
+
+    // Initialize shadow reported state
+    log("Initializing shadow reported states...");
+    await updateShadowReportedState("public");
+    await updateShadowReportedState("private");
 
     // Start health data publishing every 15 minutes (900000 ms)
     // First publish immediately
