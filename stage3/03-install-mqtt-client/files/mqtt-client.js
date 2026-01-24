@@ -106,7 +106,7 @@ const SHADOW_CONFIG = {
     state: {
       light: false,
       sound: false,
-      cutterType: "partial", // "full", "partial", or "none"
+      cutterType: "partial", // "partial" (default) or "none"
     },
   },
   private: {
@@ -147,7 +147,7 @@ function watchCutterConfigFile() {
           const data = JSON.parse(fs.readFileSync(CUTTER_CONFIG_FILE, "utf8"));
           if (
             data.cutterType &&
-            ["partial", "full", "none"].includes(data.cutterType)
+            ["partial", "none"].includes(data.cutterType)
           ) {
             const currentValue = SHADOW_CONFIG.public.state.cutterType;
             if (data.cutterType !== currentValue) {
