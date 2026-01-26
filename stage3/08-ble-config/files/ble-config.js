@@ -56,9 +56,11 @@ let connectionStatus = "idle"; // idle, connecting, connected, failed
 let statusClients = [];
 let scanClients = [];
 let currentCutterType = "partial"; // default: "partial", "full", or "none"
+let currentVolume = 4; // default: 4 (range 0-8, where 0=off)
 
 // Config file paths
 const CUTTER_CONFIG_FILE = `${EATABIT_DIR}/config/cutter-type.json`;
+const VOLUME_CONFIG_FILE = `${EATABIT_DIR}/config/volume.json`;
 
 /**
  * Load cutter type from config file
@@ -97,6 +99,43 @@ function saveCutterType(value) {
   }
 }
 
+/**
+ * Load volume setting from config file
+ */
+function loadVolume() {
+  try {
+    if (fs.existsSync(VOLUME_CONFIG_FILE)) {
+      const data = JSON.parse(fs.readFileSync(VOLUME_CONFIG_FILE, "utf8"));
+      if (typeof data.volume === "number" && data.volume >= 0 && data.volume <= 8) {
+        currentVolume = data.volume;
+        log(`Loaded volume setting from config: ${currentVolume}`);
+      }
+    }
+  } catch (err) {
+    log(`Failed to load volume setting: ${err.message}`, "ERROR");
+  }
+}
+
+/**
+ * Save volume setting to config file
+ */
+function saveVolume(value) {
+  try {
+    const configDir = path.dirname(VOLUME_CONFIG_FILE);
+    if (!fs.existsSync(configDir)) {
+      fs.mkdirSync(configDir, { recursive: true, mode: 0o777 });
+    }
+    fs.writeFileSync(
+      VOLUME_CONFIG_FILE,
+      JSON.stringify({ volume: value, timestamp: new Date().toISOString() }, null, 2),
+      { mode: 0o666 }
+    );
+    log(`Saved volume setting to config: ${value}`);
+  } catch (err) {
+    log(`Failed to save volume setting: ${err.message}`, "ERROR");
+  }
+}
+
 // UUIDs for WiFi Configuration Service
 const WIFI_SERVICE_UUID = "8f4c9b0e-5e57-4f9f-9a2a-4b6f8de9a3c1";
 const SSID_CHAR_UUID = "0e2f3e4b-d9e2-4d0c-8a6c-2bbd2f40c3a7";
@@ -106,6 +145,7 @@ const STATUS_CHAR_UUID = "a2e6d8f3-71ac-4c17-8d79-7d7f4f5c2e43";
 const CONFIG_STATUS_CHAR_UUID = "c4d5e6f7-8a9b-0c1d-2e3f-4a5b6c7d8e9f";
 const SCAN_CHAR_UUID = "b3d4f5e6-7a8b-9c0d-1e2f-3a4b5c6d7e8f";
 const CUTTER_TYPE_CHAR_UUID = "e1f2a3b4-5c6d-7e8f-9a0b-1c2d3e4f5a6b";
+const SOUND_CHAR_UUID = "f2a3b4c5-6d7e-8f9a-0b1c-2d3e4f5a6b7c";
 
 /**
  * Initialize logging
@@ -607,6 +647,34 @@ function createCutterTypeCharacteristic() {
 }
 
 /**
+ * Create Volume Characteristic (Read/Write)
+ * Allows clients to get/set the printer volume: 0-8 (0=off, 1-8=volume level)
+ */
+function createVolumeCharacteristic() {
+  return new bleno.Characteristic({
+    uuid: SOUND_CHAR_UUID,
+    properties: ["read", "write"],
+    onReadRequest: (offset, callback) => {
+      log(`Volume read request, current: ${currentVolume}`);
+      const buffer = Buffer.from(String(currentVolume));
+      callback(bleno.Characteristic.RESULT_SUCCESS, buffer);
+    },
+    onWriteRequest: (data, offset, withoutResponse, callback) => {
+      const value = parseInt(data.toString("utf8").trim(), 10);
+      if (!isNaN(value) && value >= 0 && value <= 8) {
+        currentVolume = value;
+        saveVolume(currentVolume);
+        log(`Volume written: ${currentVolume}`);
+        callback(bleno.Characteristic.RESULT_SUCCESS);
+      } else {
+        log(`Invalid volume value: ${value}`, "ERROR");
+        callback(bleno.Characteristic.RESULT_UNLIKELY_ERROR);
+      }
+    },
+  });
+}
+
+/**
  * Create WiFi Configuration Service
  */
 function createWiFiService() {
@@ -620,6 +688,7 @@ function createWiFiService() {
       createConfigStatusCharacteristic(),
       createScanCharacteristic(),
       createCutterTypeCharacteristic(),
+      createVolumeCharacteristic(),
     ],
   });
 }
@@ -701,6 +770,9 @@ async function main() {
 
     // Load cutter type from config file
     loadCutterType();
+
+    // Load volume setting from config file
+    loadVolume();
 
     initializeBLE();
 

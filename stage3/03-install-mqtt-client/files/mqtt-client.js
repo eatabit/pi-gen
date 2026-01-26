@@ -36,6 +36,7 @@ JOB_EVENTS = {
 
 // Printer events
 PRINTER_EVENTS = {
+  POWERED_OFF: "POWERED_OFF",
   COVER_OPEN: "COVER_OPEN",
   OUT_OF_PAPER: "OUT_OF_PAPER",
   MECHANICAL_ERROR: "MECHANICAL_ERROR",
@@ -102,10 +103,10 @@ const PRIVATE_SHADOW_PREFIX = `${TOPIC_PREFIX}/shadow/name/private`;
 const SHADOW_CONFIG = {
   public: {
     name: "public",
-    properties: ["light", "sound", "cutterType"],
+    properties: ["light", "volume", "cutterType"],
     state: {
       light: false,
-      sound: false,
+      volume: 4, // 0=off, 1-8=volume level
       cutterType: "partial", // "partial" (default) or "none"
     },
   },
@@ -120,6 +121,135 @@ const SHADOW_CONFIG = {
 
 // Config file paths
 const CUTTER_CONFIG_FILE = `${EATABIT_DIR}/config/cutter-type.json`;
+const VOLUME_CONFIG_FILE = `${EATABIT_DIR}/config/volume.json`;
+const LIGHT_CONFIG_FILE = `${EATABIT_DIR}/config/light.json`;
+
+/**
+ * Load local device config files into SHADOW_CONFIG.public.state
+ * This makes the device config the source of truth for the public shadow
+ */
+function loadLocalPublicShadowConfig() {
+  // Load cutter type
+  try {
+    if (fs.existsSync(CUTTER_CONFIG_FILE)) {
+      const data = JSON.parse(fs.readFileSync(CUTTER_CONFIG_FILE, "utf8"));
+      if (data.cutterType && ["partial", "none"].includes(data.cutterType)) {
+        SHADOW_CONFIG.public.state.cutterType = data.cutterType;
+        log(`Loaded cutterType from local config: ${data.cutterType}`);
+      }
+    }
+  } catch (err) {
+    log(`Failed to load cutter config: ${err.message}`, "ERROR");
+  }
+
+  // Load volume setting
+  try {
+    if (fs.existsSync(VOLUME_CONFIG_FILE)) {
+      const data = JSON.parse(fs.readFileSync(VOLUME_CONFIG_FILE, "utf8"));
+      if (typeof data.volume === "number" && data.volume >= 0 && data.volume <= 8) {
+        SHADOW_CONFIG.public.state.volume = data.volume;
+        log(`Loaded volume from local config: ${data.volume}`);
+      }
+    }
+  } catch (err) {
+    log(`Failed to load volume config: ${err.message}`, "ERROR");
+  }
+
+  // Load light setting
+  try {
+    if (fs.existsSync(LIGHT_CONFIG_FILE)) {
+      const data = JSON.parse(fs.readFileSync(LIGHT_CONFIG_FILE, "utf8"));
+      if (typeof data.light === "boolean") {
+        SHADOW_CONFIG.public.state.light = data.light;
+        log(`Loaded light from local config: ${data.light}`);
+      }
+    }
+  } catch (err) {
+    log(`Failed to load light config: ${err.message}`, "ERROR");
+  }
+
+  log(
+    `Local public shadow config loaded: ${JSON.stringify(SHADOW_CONFIG.public.state)}`,
+  );
+}
+
+// ESC/POS Volume Commands (from iot-doc/ESCPOS/Custom Speaker Commands.md)
+// Volume: 0=off, 1-8=volume level
+
+// Unlock parameters command
+const UNLOCK_PARAMS_CMD = Buffer.from([
+  0x1b, 0x1c, 0x26, 0x20, 0x56, 0x31, 0x20, 0x64, 0x6f, 0x20, 0x22, 0x75,
+  0x6e, 0x6c, 0x6f, 0x63, 0x6b, 0x5f, 0x70, 0x61, 0x72, 0x61, 0x22, 0x0d,
+  0x0a,
+]);
+
+// Additional speaker config command
+const SPEAKER_CONFIG_CMD = Buffer.from([
+  0x1b, 0x1c, 0x26, 0x20, 0x56, 0x31, 0x20, 0x73, 0x65, 0x74, 0x6b, 0x65,
+  0x79, 0x0d, 0x0a, 0x00, 0x92, 0x01, 0x01, 0x00,
+]);
+
+// Save parameter zone command
+const SAVE_PARAMS_CMD = Buffer.from([
+  0x1b, 0x1c, 0x26, 0x20, 0x56, 0x31, 0x20, 0x64, 0x6f, 0x20, 0x22, 0x73,
+  0x61, 0x76, 0x65, 0x5f, 0x70, 0x61, 0x72, 0x61, 0x5f, 0x7a, 0x6f, 0x6e,
+  0x65, 0x22, 0x0d, 0x0a,
+]);
+
+/**
+ * Generate ESC/POS commands for setting volume
+ * @param {number} volume - Volume level 0-8 (0=off, 1-8=volume)
+ * @returns {Buffer[]} Array of command buffers
+ */
+function getVolumeCommands(volume) {
+  const commands = [UNLOCK_PARAMS_CMD];
+
+  if (volume === 0) {
+    // Speaker OFF
+    commands.push(
+      Buffer.from([
+        0x1b, 0x1c, 0x26, 0x20, 0x56, 0x31, 0x20, 0x73, 0x65, 0x74, 0x6b, 0x65,
+        0x79, 0x0d, 0x0a, 0x00, 0xee, 0x01, 0x04, 0x00, 0x00, 0x00, 0x00,
+      ]),
+    );
+  } else {
+    // Speaker ON
+    commands.push(
+      Buffer.from([
+        0x1b, 0x1c, 0x26, 0x20, 0x56, 0x31, 0x20, 0x73, 0x65, 0x74, 0x6b, 0x65,
+        0x79, 0x0d, 0x0a, 0x00, 0xee, 0x01, 0x04, 0x01, 0x00, 0x00, 0x00,
+      ]),
+    );
+    // Set volume level (1-8)
+    commands.push(
+      Buffer.from([
+        0x1b, 0x1c, 0x26, 0x20, 0x56, 0x31, 0x20, 0x73, 0x65, 0x74, 0x6b, 0x65,
+        0x79, 0x0d, 0x0a, 0x00, 0xef, 0x01, 0x01, volume,
+      ]),
+    );
+  }
+
+  commands.push(SPEAKER_CONFIG_CMD);
+  commands.push(SAVE_PARAMS_CMD);
+
+  return commands;
+}
+
+/**
+ * Execute ESC/POS volume command to set printer speaker volume
+ * @param {number} volume - Volume level 0-8 (0=off, 1-8=volume)
+ */
+function executeVolumeCommand(volume) {
+  try {
+    const commands = getVolumeCommands(volume);
+    for (const cmd of commands) {
+      fs.writeFileSync("/dev/usb/lp0", cmd);
+    }
+    log(`Volume set to ${volume} via ESC/POS commands`);
+  } catch (err) {
+    log(`Failed to execute volume command: ${err.message}`, "ERROR");
+  }
+}
 
 /**
  * Watch cutter config file for changes (from BLE service)
@@ -169,6 +299,54 @@ function watchCutterConfigFile() {
   });
 
   log("Watching cutter config file for changes");
+}
+
+/**
+ * Watch volume config file for changes (from BLE service)
+ * When the file changes, update the shadow with the new value and execute ESC/POS command
+ */
+function watchVolumeConfigFile() {
+  const configDir = path.dirname(VOLUME_CONFIG_FILE);
+
+  // Ensure config directory exists
+  if (!fs.existsSync(configDir)) {
+    fs.mkdirSync(configDir, { recursive: true, mode: 0o777 });
+  }
+
+  // Debounce to prevent multiple triggers
+  let debounceTimer = null;
+
+  fs.watch(configDir, (eventType, filename) => {
+    if (filename === path.basename(VOLUME_CONFIG_FILE)) {
+      // Debounce file change events
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(async () => {
+        try {
+          if (!fs.existsSync(VOLUME_CONFIG_FILE)) return;
+
+          const data = JSON.parse(fs.readFileSync(VOLUME_CONFIG_FILE, "utf8"));
+          if (typeof data.volume === "number" && data.volume >= 0 && data.volume <= 8) {
+            const currentValue = SHADOW_CONFIG.public.state.volume;
+            if (data.volume !== currentValue) {
+              log(
+                `Volume config file changed: ${currentValue} -> ${data.volume}`,
+              );
+              SHADOW_CONFIG.public.state.volume = data.volume;
+
+              // Execute ESC/POS command to change printer volume
+              executeVolumeCommand(data.volume);
+
+              await updateShadowReportedState("public");
+            }
+          }
+        } catch (err) {
+          log(`Failed to process volume config change: ${err.message}`, "ERROR");
+        }
+      }, 100);
+    }
+  });
+
+  log("Watching volume config file for changes");
 }
 
 // Job topics (inbound)
@@ -355,9 +533,10 @@ async function handleShadowDelta(shadowName, desiredState) {
             log(`Light ${desiredState[prop] ? "enabled" : "disabled"}`);
             // TODO: Implement light control (e.g., GPIO, LED)
           }
-          if (prop === "sound") {
-            log(`Sound ${desiredState[prop] ? "enabled" : "disabled"}`);
-            // TODO: Implement sound control (e.g., speaker, buzzer)
+          if (prop === "volume") {
+            log(`Volume set to: ${desiredState[prop]}`);
+            // Execute ESC/POS command to change printer volume
+            executeVolumeCommand(desiredState[prop]);
           }
           if (prop === "cutterType") {
             log(`Cutter type set to: ${desiredState[prop]}`);
@@ -386,6 +565,11 @@ async function handleShadowDelta(shadowName, desiredState) {
 // Printer status check
 function checkPrinterStatus() {
   try {
+    // Check if printer device exists (printer must be powered on and connected)
+    if (!fs.existsSync("/dev/usb/lp0")) {
+      return { ready: false, reason: PRINTER_EVENTS.POWERED_OFF };
+    }
+
     const onlineStatus = execSync(
       `printf "\\x10\\x04\\x01" > /dev/usb/lp0 && timeout 1s dd if=/dev/usb/lp0 bs=1 count=1 2>/dev/null | xxd -p`,
       { encoding: "utf8", shell: "/bin/bash" },
@@ -536,19 +720,22 @@ async function main() {
   connection.on("connect", async () => {
     log("Connected to AWS IoT Core");
 
-    // Fetch current shadow state for both shadows
-    for (const shadowName of Object.keys(SHADOW_CONFIG)) {
-      try {
-        const topic = `${TOPIC_PREFIX}/shadow/name/${shadowName}/get`;
-        await connection.publish(
-          topic,
-          JSON.stringify({}),
-          mqtt.QoS.AtLeastOnce,
-        );
-        log(`Requested shadow state for: ${shadowName}`);
-      } catch (err) {
-        log(`Failed to request shadow ${shadowName}: ${err.message}`, "ERROR");
-      }
+    // For "public" shadow: load local config and push to AWS (device is source of truth)
+    try {
+      loadLocalPublicShadowConfig();
+      await updateShadowReportedState("public");
+      log("Pushed local config to AWS public shadow");
+    } catch (err) {
+      log(`Failed to push public shadow: ${err.message}`, "ERROR");
+    }
+
+    // For "private" shadow: fetch from AWS (cloud is source of truth)
+    try {
+      const topic = `${TOPIC_PREFIX}/shadow/name/private/get`;
+      await connection.publish(topic, JSON.stringify({}), mqtt.QoS.AtLeastOnce);
+      log("Requested shadow state for: private");
+    } catch (err) {
+      log(`Failed to request private shadow: ${err.message}`, "ERROR");
     }
 
     // Publish an empty JSON payload to request the next job
@@ -676,7 +863,7 @@ async function main() {
             log(`Job ${jobId} has expired and will be rejected`);
 
             const rejectedPayload = JSON.stringify({
-              status: JOB_EXECUTION_STATUSES.FAILED,
+              status: JOB_EXECUTION_STATUSES.REJECTED, // REJECTED Jobs are NOT retried
               statusDetails: {
                 event: JOB_EVENTS.EXPIRED,
               },
@@ -792,11 +979,19 @@ async function main() {
                 // Print the document
                 const printResult = printDocument(jobId);
 
-                // Handle PRINTER_OFFLINE events
-                if (printResult in PRINTER_EVENTS) {
+                // Only mark as SUCCEEDED if print was successful
+                // Any other result (PRINTER_EVENTS or device errors) should be FAILED
+                if (printResult !== JOB_EVENTS.PRINTED) {
                   log(
                     `Job ${jobId} cannot be printed due to printer issue: ${printResult}`,
                   );
+
+                  // Delay before reporting failure to slow down retry cycle
+                  // This gives users time to fix printer issues (e.g., add paper, power on printer)
+                  log(
+                    `Waiting 5 seconds before reporting failure for job ${jobId}...`,
+                  );
+                  await new Promise((resolve) => setTimeout(resolve, 5000));
 
                   const printerOfflinePayload = JSON.stringify({
                     status: JOB_EXECUTION_STATUSES.FAILED,
@@ -813,7 +1008,7 @@ async function main() {
                   connection.publish(
                     `$aws/things/${DEVICE_ID}/jobs/${jobId}/update`,
                     printerOfflinePayload,
-                    mqtt.QoS.AtLeastOnceƒ,
+                    mqtt.QoS.AtLeastOnce,
                   );
 
                   return;
@@ -1195,6 +1390,9 @@ async function main() {
     // Watch cutter config file for BLE-initiated changes
     watchCutterConfigFile();
 
+    // Watch volume config file for BLE-initiated changes
+    watchVolumeConfigFile();
+
     // Start health data publishing every 15 minutes (900000 ms)
     // First publish immediately
     await publishHealthData();
@@ -1206,16 +1404,42 @@ async function main() {
       process.on("SIGINT", async () => {
         log("Received SIGINT, disconnecting...");
         clearInterval(healthInterval);
-        await publishEvent("disconnected", { reason: "SIGINT" });
-        await connection.disconnect();
+
+        // Force exit after 10 seconds if graceful shutdown hangs
+        const forceExit = setTimeout(() => {
+          log("Graceful shutdown timed out, forcing exit");
+          process.exit(0);
+        }, 10000);
+
+        try {
+          await publishEvent("disconnected", { reason: "SIGINT" });
+          await connection.disconnect();
+        } catch (err) {
+          log(`Error during shutdown: ${err.message}`, "ERROR");
+        }
+
+        clearTimeout(forceExit);
         resolve();
       });
 
       process.on("SIGTERM", async () => {
         log("Received SIGTERM, disconnecting...");
         clearInterval(healthInterval);
-        await publishEvent("disconnected", { reason: "SIGTERM" });
-        await connection.disconnect();
+
+        // Force exit after 10 seconds if graceful shutdown hangs
+        const forceExit = setTimeout(() => {
+          log("Graceful shutdown timed out, forcing exit");
+          process.exit(0);
+        }, 10000);
+
+        try {
+          await publishEvent("disconnected", { reason: "SIGTERM" });
+          await connection.disconnect();
+        } catch (err) {
+          log(`Error during shutdown: ${err.message}`, "ERROR");
+        }
+
+        clearTimeout(forceExit);
         resolve();
       });
     });
