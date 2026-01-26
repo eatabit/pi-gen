@@ -17,6 +17,17 @@ echo "Creating config directory for shadow persistence..."
 mkdir -p "${ROOTFS_DIR}/usr/local/lib/eatabit/config"
 chmod 777 "${ROOTFS_DIR}/usr/local/lib/eatabit/config"
 
+# Install default config files (readable/writable by mqtt-client and ble-config services)
+echo "Installing default config files..."
+install -D -m 0666 files/cutter-type.json \
+  "${ROOTFS_DIR}/usr/local/lib/eatabit/config/cutter-type.json"
+install -D -m 0666 files/volume.json \
+  "${ROOTFS_DIR}/usr/local/lib/eatabit/config/volume.json"
+install -D -m 0666 files/light.json \
+  "${ROOTFS_DIR}/usr/local/lib/eatabit/config/light.json"
+
+echo "Default config files installed to /usr/local/lib/eatabit/config/"
+
 # Create systemd service unit
 cat > "${ROOTFS_DIR}/etc/systemd/system/mqtt-client.service" << 'EOF'
 [Unit]
