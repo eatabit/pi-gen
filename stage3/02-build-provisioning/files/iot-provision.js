@@ -19,7 +19,7 @@ const DEVICE_ID = fs
   .readFileSync("/proc/cpuinfo", "utf8")
   .match(/Serial\s*:\s*(\w+)/)[1]; // Pi serial
 const VERSION = "1.0.0";
-const AWS_DEVICE_FILE = `${EATABIT_ROOT_DIR}/conf/aws-device.json`;
+const AWS_DEVICE_FILE = `${EATABIT_ROOT_DIR}/config/aws-device.json`;
 
 const LOG_FILE = `${EATABIT_ROOT_DIR}/log/provision.log`;
 

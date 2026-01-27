@@ -42,11 +42,11 @@ else
   exit 1
 fi
 
-# Create eatabit lib conf directory
-echo "Creating eatabit lib conf directory..."
-if mkdir -p "${ROOTFS_DIR}${EATABIT_ROOT_DIR}/conf"; then
-  echo "Successfully created ${EATABIT_ROOT_DIR}/conf"
+# Create eatabit lib config directory
+echo "Creating eatabit lib config directory..."
+if mkdir -p "${ROOTFS_DIR}${EATABIT_ROOT_DIR}/config"; then
+  echo "Successfully created ${EATABIT_ROOT_DIR}/config"
 else
-  echo "Failed to create ${EATABIT_ROOT_DIR}/conf"
+  echo "Failed to create ${EATABIT_ROOT_DIR}/config"
   exit 1
 fi
