@@ -16,6 +16,7 @@ const ENDPOINT = "a3fw1u2gvi2uac-ats.iot.us-east-2.amazonaws.com";
 const LOG_FILE = `${EATABIT_DIR}/log/mqtt-client.log`;
 const JOBS_DIR = "/tmp";
 const HEALTH_JSON_PATH = "/usr/local/lib/eatabit/health.json";
+const DEVICE_READY_ESCPOS = `${EATABIT_DIR}/escpos/deviceReady.escpos`;
 
 // Job statuses
 JOB_EXECUTION_STATUSES = {
@@ -107,7 +108,7 @@ const SHADOW_CONFIG = {
     state: {
       light: false,
       volume: 4, // 0=off, 1-8=volume level
-      cutterType: "partial", // "partial" (default) or "none"
+      cutterType: "partial", // "partial" (default), "full", or "none"
     },
   },
   private: {
@@ -133,7 +134,10 @@ function loadLocalPublicShadowConfig() {
   try {
     if (fs.existsSync(CUTTER_CONFIG_FILE)) {
       const data = JSON.parse(fs.readFileSync(CUTTER_CONFIG_FILE, "utf8"));
-      if (data.cutterType && ["partial", "none"].includes(data.cutterType)) {
+      if (
+        data.cutterType &&
+        ["partial", "full", "none"].includes(data.cutterType)
+      ) {
         SHADOW_CONFIG.public.state.cutterType = data.cutterType;
         log(`Loaded cutterType from local config: ${data.cutterType}`);
       }
@@ -146,7 +150,11 @@ function loadLocalPublicShadowConfig() {
   try {
     if (fs.existsSync(VOLUME_CONFIG_FILE)) {
       const data = JSON.parse(fs.readFileSync(VOLUME_CONFIG_FILE, "utf8"));
-      if (typeof data.volume === "number" && data.volume >= 0 && data.volume <= 8) {
+      if (
+        typeof data.volume === "number" &&
+        data.volume >= 0 &&
+        data.volume <= 8
+      ) {
         SHADOW_CONFIG.public.state.volume = data.volume;
         log(`Loaded volume from local config: ${data.volume}`);
       }
@@ -178,22 +186,28 @@ function loadLocalPublicShadowConfig() {
 
 // Unlock parameters command
 const UNLOCK_PARAMS_CMD = Buffer.from([
-  0x1b, 0x1c, 0x26, 0x20, 0x56, 0x31, 0x20, 0x64, 0x6f, 0x20, 0x22, 0x75,
-  0x6e, 0x6c, 0x6f, 0x63, 0x6b, 0x5f, 0x70, 0x61, 0x72, 0x61, 0x22, 0x0d,
-  0x0a,
+  0x1b, 0x1c, 0x26, 0x20, 0x56, 0x31, 0x20, 0x64, 0x6f, 0x20, 0x22, 0x75, 0x6e,
+  0x6c, 0x6f, 0x63, 0x6b, 0x5f, 0x70, 0x61, 0x72, 0x61, 0x22, 0x0d, 0x0a,
 ]);
 
 // Additional speaker config command
 const SPEAKER_CONFIG_CMD = Buffer.from([
-  0x1b, 0x1c, 0x26, 0x20, 0x56, 0x31, 0x20, 0x73, 0x65, 0x74, 0x6b, 0x65,
-  0x79, 0x0d, 0x0a, 0x00, 0x92, 0x01, 0x01, 0x00,
+  0x1b, 0x1c, 0x26, 0x20, 0x56, 0x31, 0x20, 0x73, 0x65, 0x74, 0x6b, 0x65, 0x79,
+  0x0d, 0x0a, 0x00, 0x92, 0x01, 0x01, 0x00,
 ]);
 
 // Save parameter zone command
 const SAVE_PARAMS_CMD = Buffer.from([
-  0x1b, 0x1c, 0x26, 0x20, 0x56, 0x31, 0x20, 0x64, 0x6f, 0x20, 0x22, 0x73,
-  0x61, 0x76, 0x65, 0x5f, 0x70, 0x61, 0x72, 0x61, 0x5f, 0x7a, 0x6f, 0x6e,
-  0x65, 0x22, 0x0d, 0x0a,
+  0x1b, 0x1c, 0x26, 0x20, 0x56, 0x31, 0x20, 0x64, 0x6f, 0x20, 0x22, 0x73, 0x61,
+  0x76, 0x65, 0x5f, 0x70, 0x61, 0x72, 0x61, 0x5f, 0x7a, 0x6f, 0x6e, 0x65, 0x22,
+  0x0d, 0x0a,
+]);
+
+// Reset printer command (required after speaker ON/OFF changes)
+const RESET_PRINTER_CMD = Buffer.from([
+  0x1b, 0x1c, 0x26, 0x20, 0x56, 0x31, 0x20, 0x64, 0x6f, 0x20, 0x22, 0x72, 0x65,
+  0x73, 0x65, 0x74, 0x5f, 0x70, 0x72, 0x69, 0x6e, 0x74, 0x65, 0x72, 0x22, 0x0d,
+  0x0a,
 ]);
 
 /**
@@ -223,14 +237,33 @@ function getVolumeCommands(volume) {
     // Set volume level (1-8)
     commands.push(
       Buffer.from([
-        0x1b, 0x1c, 0x26, 0x20, 0x56, 0x31, 0x20, 0x73, 0x65, 0x74, 0x6b, 0x65,
-        0x79, 0x0d, 0x0a, 0x00, 0xef, 0x01, 0x01, volume,
+        0x1b,
+        0x1c,
+        0x26,
+        0x20,
+        0x56,
+        0x31,
+        0x20,
+        0x73,
+        0x65,
+        0x74,
+        0x6b,
+        0x65,
+        0x79,
+        0x0d,
+        0x0a,
+        0x00,
+        0xef,
+        0x01,
+        0x01,
+        volume,
       ]),
     );
   }
 
   commands.push(SPEAKER_CONFIG_CMD);
   commands.push(SAVE_PARAMS_CMD);
+  commands.push(RESET_PRINTER_CMD);
 
   return commands;
 }
@@ -277,7 +310,7 @@ function watchCutterConfigFile() {
           const data = JSON.parse(fs.readFileSync(CUTTER_CONFIG_FILE, "utf8"));
           if (
             data.cutterType &&
-            ["partial", "none"].includes(data.cutterType)
+            ["partial", "full", "none"].includes(data.cutterType)
           ) {
             const currentValue = SHADOW_CONFIG.public.state.cutterType;
             if (data.cutterType !== currentValue) {
@@ -325,7 +358,11 @@ function watchVolumeConfigFile() {
           if (!fs.existsSync(VOLUME_CONFIG_FILE)) return;
 
           const data = JSON.parse(fs.readFileSync(VOLUME_CONFIG_FILE, "utf8"));
-          if (typeof data.volume === "number" && data.volume >= 0 && data.volume <= 8) {
+          if (
+            typeof data.volume === "number" &&
+            data.volume >= 0 &&
+            data.volume <= 8
+          ) {
             const currentValue = SHADOW_CONFIG.public.state.volume;
             if (data.volume !== currentValue) {
               log(
@@ -340,7 +377,10 @@ function watchVolumeConfigFile() {
             }
           }
         } catch (err) {
-          log(`Failed to process volume config change: ${err.message}`, "ERROR");
+          log(
+            `Failed to process volume config change: ${err.message}`,
+            "ERROR",
+          );
         }
       }, 100);
     }
@@ -373,6 +413,9 @@ let mqttConnection;
 
 // Global ngrok listener reference
 let ngrokListener = null;
+
+// Flag to track if device ready receipt has been printed (once per power cycle)
+let hasDeviceReadyPrinted = false;
 
 // Helper function to publish events
 async function publishEvent(eventType, eventData) {
@@ -720,6 +763,24 @@ async function main() {
   connection.on("connect", async () => {
     log("Connected to AWS IoT Core");
 
+    // Print device ready receipt on first connection per power cycle
+    if (!hasDeviceReadyPrinted) {
+      try {
+        const printerStatus = checkPrinterStatus();
+        if (printerStatus.ready && fs.existsSync(DEVICE_READY_ESCPOS)) {
+          execSync(`cat "${DEVICE_READY_ESCPOS}" > /dev/usb/lp0`, {
+            shell: "/bin/bash",
+          });
+          log("Printed device ready receipt");
+        } else if (!printerStatus.ready) {
+          log(`Skipping device ready print: ${printerStatus.reason}`, "WARN");
+        }
+      } catch (err) {
+        log(`Failed to print device ready receipt: ${err.message}`, "ERROR");
+      }
+      hasDeviceReadyPrinted = true;
+    }
+
     // For "public" shadow: load local config and push to AWS (device is source of truth)
     try {
       loadLocalPublicShadowConfig();
@@ -989,9 +1050,9 @@ async function main() {
                   // Delay before reporting failure to slow down retry cycle
                   // This gives users time to fix printer issues (e.g., add paper, power on printer)
                   log(
-                    `Waiting 5 seconds before reporting failure for job ${jobId}...`,
+                    `Waiting 10 seconds before reporting failure for job ${jobId}...`,
                   );
-                  await new Promise((resolve) => setTimeout(resolve, 5000));
+                  await new Promise((resolve) => setTimeout(resolve, 10000));
 
                   const printerOfflinePayload = JSON.stringify({
                     status: JOB_EXECUTION_STATUSES.FAILED,
