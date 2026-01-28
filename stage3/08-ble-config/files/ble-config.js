@@ -69,7 +69,10 @@ function loadCutterType() {
   try {
     if (fs.existsSync(CUTTER_CONFIG_FILE)) {
       const data = JSON.parse(fs.readFileSync(CUTTER_CONFIG_FILE, "utf8"));
-      if (data.cutterType && ["partial", "full", "none"].includes(data.cutterType)) {
+      if (
+        data.cutterType &&
+        ["partial", "full", "none"].includes(data.cutterType)
+      ) {
         currentCutterType = data.cutterType;
         log(`Loaded cutter type from config: ${currentCutterType}`);
       }
@@ -90,8 +93,12 @@ function saveCutterType(value) {
     }
     fs.writeFileSync(
       CUTTER_CONFIG_FILE,
-      JSON.stringify({ cutterType: value, timestamp: new Date().toISOString() }, null, 2),
-      { mode: 0o666 }
+      JSON.stringify(
+        { cutterType: value, timestamp: new Date().toISOString() },
+        null,
+        2,
+      ),
+      { mode: 0o666 },
     );
     log(`Saved cutter type to config: ${value}`);
   } catch (err) {
@@ -106,7 +113,11 @@ function loadVolume() {
   try {
     if (fs.existsSync(VOLUME_CONFIG_FILE)) {
       const data = JSON.parse(fs.readFileSync(VOLUME_CONFIG_FILE, "utf8"));
-      if (typeof data.volume === "number" && data.volume >= 0 && data.volume <= 8) {
+      if (
+        typeof data.volume === "number" &&
+        data.volume >= 0 &&
+        data.volume <= 8
+      ) {
         currentVolume = data.volume;
         log(`Loaded volume setting from config: ${currentVolume}`);
       }
@@ -127,8 +138,12 @@ function saveVolume(value) {
     }
     fs.writeFileSync(
       VOLUME_CONFIG_FILE,
-      JSON.stringify({ volume: value, timestamp: new Date().toISOString() }, null, 2),
-      { mode: 0o666 }
+      JSON.stringify(
+        { volume: value, timestamp: new Date().toISOString() },
+        null,
+        2,
+      ),
+      { mode: 0o666 },
     );
     log(`Saved volume setting to config: ${value}`);
   } catch (err) {
@@ -146,6 +161,10 @@ const CONFIG_STATUS_CHAR_UUID = "c4d5e6f7-8a9b-0c1d-2e3f-4a5b6c7d8e9f";
 const SCAN_CHAR_UUID = "b3d4f5e6-7a8b-9c0d-1e2f-3a4b5c6d7e8f";
 const CUTTER_TYPE_CHAR_UUID = "e1f2a3b4-5c6d-7e8f-9a0b-1c2d3e4f5a6b";
 const SOUND_CHAR_UUID = "f2a3b4c5-6d7e-8f9a-0b1c-2d3e4f5a6b7c";
+const DIAGNOSTICS_CHAR_UUID = "d1a2b3c4-5e6f-7a8b-9c0d-1e2f3a4b5c6d";
+
+// Health data file path
+const HEALTH_JSON_PATH = "/usr/local/lib/eatabit/health.json";
 
 /**
  * Initialize logging
@@ -675,6 +694,253 @@ function createVolumeCharacteristic() {
 }
 
 /**
+ * Format bytes to human-readable string
+ */
+function formatBytes(bytes) {
+  if (bytes === null || bytes === undefined) return "N/A";
+  const units = ["B", "KB", "MB", "GB"];
+  let unitIndex = 0;
+  let value = bytes;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex++;
+  }
+  return `${value.toFixed(1)} ${units[unitIndex]}`;
+}
+
+/**
+ * Print diagnostics page to thermal printer
+ * Reads health.json and formats it for thermal output with partial cut
+ */
+function printDiagnostics() {
+  try {
+    log("Printing diagnostics page...");
+
+    // Read health data
+    let healthData = {};
+    if (fs.existsSync(HEALTH_JSON_PATH)) {
+      healthData = JSON.parse(fs.readFileSync(HEALTH_JSON_PATH, "utf8"));
+    } else {
+      log("Health data file not found", "WARN");
+    }
+
+    // Read device ID
+    let deviceId = "Unknown";
+    try {
+      deviceId = fs
+        .readFileSync("/usr/local/lib/eatabit/deviceid", "utf8")
+        .trim();
+    } catch (e) {
+      log("Could not read device ID", "WARN");
+    }
+
+    // ESC/POS commands
+    const ESC = 0x1b;
+    const GS = 0x1d;
+
+    // Initialize printer
+    const init = Buffer.from([ESC, 0x40]); // ESC @ - Initialize
+
+    // Bold on/off
+    const boldOn = Buffer.from([ESC, 0x45, 0x01]); // ESC E 1
+    const boldOff = Buffer.from([ESC, 0x45, 0x00]); // ESC E 0
+
+    // Center alignment
+    const centerAlign = Buffer.from([ESC, 0x61, 0x01]); // ESC a 1
+    const leftAlign = Buffer.from([ESC, 0x61, 0x00]); // ESC a 0
+
+    // Double height/width for title
+    const doubleSize = Buffer.from([GS, 0x21, 0x11]); // GS ! 0x11
+    const normalSize = Buffer.from([GS, 0x21, 0x00]); // GS ! 0x00
+
+    // Partial cut command
+    const partialCut = Buffer.from([GS, 0x56, 0x01]); // GS V 1
+
+    // Build diagnostic content
+    const lines = [];
+
+    // Title
+    lines.push(init);
+    lines.push(centerAlign);
+    lines.push(doubleSize);
+    lines.push(boldOn);
+    lines.push(Buffer.from("DIAGNOSTICS\n"));
+    lines.push(normalSize);
+    lines.push(boldOff);
+    lines.push(Buffer.from("================================\n"));
+    lines.push(leftAlign);
+
+    // Timestamp
+    lines.push(Buffer.from(`Date: ${new Date().toLocaleString()}\n`));
+    lines.push(Buffer.from(`Device: ${deviceId}\n`));
+    lines.push(Buffer.from("--------------------------------\n"));
+
+    // System info
+    lines.push(boldOn);
+    lines.push(Buffer.from("SYSTEM\n"));
+    lines.push(boldOff);
+
+    if (healthData.system) {
+      const sys = healthData.system;
+
+      // Uptime (sys.uptime is an object with {seconds, formatted})
+      if (sys.uptime && sys.uptime.formatted) {
+        lines.push(Buffer.from(`Uptime: ${sys.uptime.formatted}\n`));
+      }
+
+      // Load average (array of 3 numbers)
+      if (sys.loadAverage && Array.isArray(sys.loadAverage)) {
+        const load = sys.loadAverage.map((l) => l.toFixed(2)).join(", ");
+        lines.push(Buffer.from(`Load: ${load}\n`));
+      }
+
+      // Memory (totalMemory and freeMemory in bytes)
+      if (sys.totalMemory && sys.freeMemory !== undefined) {
+        const usedMem = sys.totalMemory - sys.freeMemory;
+        lines.push(
+          Buffer.from(
+            `Memory: ${formatBytes(usedMem)} / ${formatBytes(sys.totalMemory)}\n`,
+          ),
+        );
+      }
+
+      // Disk (sys.disk.root has total, used, free, usagePercent)
+      if (sys.disk && sys.disk.root) {
+        const root = sys.disk.root;
+        if (root.usagePercent !== null) {
+          lines.push(
+            Buffer.from(
+              `Disk: ${formatBytes(root.used)} / ${formatBytes(root.total)} (${root.usagePercent}%)\n`,
+            ),
+          );
+        }
+      }
+
+      // CPU count
+      if (sys.cpuCount) {
+        lines.push(Buffer.from(`CPUs: ${sys.cpuCount}\n`));
+      }
+    } else {
+      lines.push(Buffer.from("No system data available\n"));
+    }
+
+    lines.push(Buffer.from("--------------------------------\n"));
+
+    // Network info
+    lines.push(boldOn);
+    lines.push(Buffer.from("NETWORK\n"));
+    lines.push(boldOff);
+
+    if (healthData.network && healthData.network.wifi) {
+      const wifi = healthData.network.wifi;
+
+      // Connection status
+      lines.push(
+        Buffer.from(`WiFi: ${wifi.connected ? "Connected" : "Disconnected"}\n`),
+      );
+
+      if (wifi.connected) {
+        if (wifi.ssid) {
+          lines.push(Buffer.from(`SSID: ${wifi.ssid}\n`));
+        }
+        if (wifi.ipAddress) {
+          lines.push(Buffer.from(`IP: ${wifi.ipAddress}\n`));
+        }
+        if (wifi.gateway) {
+          lines.push(Buffer.from(`Gateway: ${wifi.gateway}\n`));
+        }
+        if (wifi.signalStrength !== null) {
+          lines.push(Buffer.from(`Signal: ${wifi.signalStrength} dBm\n`));
+        }
+        if (wifi.linkQuality) {
+          lines.push(Buffer.from(`Quality: ${wifi.linkQuality}\n`));
+        }
+      }
+    } else {
+      lines.push(Buffer.from("No network data available\n"));
+    }
+
+    lines.push(Buffer.from("--------------------------------\n"));
+
+    // Services info
+    lines.push(boldOn);
+    lines.push(Buffer.from("SERVICES\n"));
+    lines.push(boldOff);
+
+    if (healthData.services) {
+      for (const [name, svc] of Object.entries(healthData.services)) {
+        // Service status is an object with {active, enabled, state, ...}
+        if (typeof svc === "object" && svc !== null) {
+          const statusStr = svc.active ? "Running" : "Stopped";
+          lines.push(Buffer.from(`${name}: ${statusStr}\n`));
+        } else {
+          // Fallback for simple boolean
+          const statusStr = svc ? "Running" : "Stopped";
+          lines.push(Buffer.from(`${name}: ${statusStr}\n`));
+        }
+      }
+    } else {
+      lines.push(Buffer.from("No service data available\n"));
+    }
+
+    lines.push(Buffer.from("--------------------------------\n"));
+
+    // Device info
+    lines.push(boldOn);
+    lines.push(Buffer.from("DEVICE\n"));
+    lines.push(boldOff);
+
+    if (healthData.device) {
+      const dev = healthData.device;
+      if (dev.hostname) lines.push(Buffer.from(`Hostname: ${dev.hostname}\n`));
+      if (dev.platform) lines.push(Buffer.from(`Platform: ${dev.platform}\n`));
+      if (dev.arch) lines.push(Buffer.from(`Arch: ${dev.arch}\n`));
+    } else {
+      lines.push(Buffer.from("No device data available\n"));
+    }
+
+    lines.push(Buffer.from("\n"));
+    lines.push(centerAlign);
+    lines.push(Buffer.from("================================\n"));
+    lines.push(Buffer.from("End of Diagnostics\n"));
+    lines.push(Buffer.from("\n\n\n\n\n\n")); // Feed paper
+
+    // Partial cut
+    lines.push(partialCut);
+
+    // Write to printer
+    const output = Buffer.concat(lines);
+    fs.writeFileSync("/dev/usb/lp0", output);
+
+    log("Diagnostics page printed successfully");
+    return true;
+  } catch (err) {
+    log(`Failed to print diagnostics: ${err.message}`, "ERROR");
+    return false;
+  }
+}
+
+/**
+ * Create Diagnostics Characteristic (Write-Only)
+ * Writing any value triggers a diagnostics page print
+ */
+function createDiagnosticsCharacteristic() {
+  return new bleno.Characteristic({
+    uuid: DIAGNOSTICS_CHAR_UUID,
+    properties: ["write"],
+    onWriteRequest: (data, offset, withoutResponse, callback) => {
+      log("Diagnostics print requested via BLE");
+      const success = printDiagnostics();
+      if (success) {
+        callback(bleno.Characteristic.RESULT_SUCCESS);
+      } else {
+        callback(bleno.Characteristic.RESULT_UNLIKELY_ERROR);
+      }
+    },
+  });
+}
+
+/**
  * Create WiFi Configuration Service
  */
 function createWiFiService() {
@@ -689,6 +955,7 @@ function createWiFiService() {
       createScanCharacteristic(),
       createCutterTypeCharacteristic(),
       createVolumeCharacteristic(),
+      createDiagnosticsCharacteristic(),
     ],
   });
 }

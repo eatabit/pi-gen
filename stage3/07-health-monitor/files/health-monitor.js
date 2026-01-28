@@ -1,5 +1,18 @@
 #!/usr/bin/env node
 
+/**
+ * Health Monitor Service
+ *
+ * Collects system health data and writes it to /usr/local/lib/eatabit/health.json
+ *
+ * IMPORTANT: The health data schema is consumed by the following services:
+ *   - mqtt-client (stage3/03-install-mqtt-client) - publishes health data to AWS IoT
+ *   - ble-config (stage3/08-ble-config) - prints diagnostics page to thermal printer
+ *
+ * If you modify the health data schema, you MUST update these dependent services
+ * to handle the new structure.
+ */
+
 const fs = require("fs");
 const path = require("path");
 const { execSync } = require("child_process");
