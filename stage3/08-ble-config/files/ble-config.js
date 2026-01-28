@@ -162,6 +162,7 @@ const SCAN_CHAR_UUID = "b3d4f5e6-7a8b-9c0d-1e2f-3a4b5c6d7e8f";
 const CUTTER_TYPE_CHAR_UUID = "e1f2a3b4-5c6d-7e8f-9a0b-1c2d3e4f5a6b";
 const SOUND_CHAR_UUID = "f2a3b4c5-6d7e-8f9a-0b1c-2d3e4f5a6b7c";
 const DIAGNOSTICS_CHAR_UUID = "d1a2b3c4-5e6f-7a8b-9c0d-1e2f3a4b5c6d";
+const RESET_CHAR_UUID = "a1b2c3d4-e5f6-7a8b-9c0d-2e3f4a5b6c7d";
 
 // Health data file path
 const HEALTH_JSON_PATH = "/usr/local/lib/eatabit/health.json";
@@ -941,6 +942,99 @@ function createDiagnosticsCharacteristic() {
 }
 
 /**
+ * Remove all configured WiFi networks and reboot the device
+ */
+function resetDevice() {
+  try {
+    log("Resetting device: removing all WiFi networks...");
+
+    // Get all WiFi connection profiles
+    const profiles = execSync("nmcli -t -f TYPE,NAME con show", {
+      encoding: "utf8",
+      shell: "/bin/bash",
+    });
+
+    const wifiProfiles = profiles
+      .split("\n")
+      .filter((line) => line.trim())
+      .filter((line) => {
+        const type = line.split(":")[0];
+        return type === "802-11-wireless" || type === "wifi";
+      })
+      .map((line) => line.split(":").slice(1).join(":"));
+
+    // Delete each WiFi profile
+    for (const profile of wifiProfiles) {
+      try {
+        log(`Deleting WiFi profile: ${profile}`);
+        execSync(`nmcli con delete "${profile}"`, {
+          encoding: "utf8",
+          shell: "/bin/bash",
+        });
+      } catch (err) {
+        log(`Failed to delete profile ${profile}: ${err.message}`, "ERROR");
+      }
+    }
+
+    log(`Removed ${wifiProfiles.length} WiFi profile(s)`);
+
+    // Record lastResetAt timestamp in health.json
+    try {
+      let healthData = {};
+      if (fs.existsSync(HEALTH_JSON_PATH)) {
+        healthData = JSON.parse(fs.readFileSync(HEALTH_JSON_PATH, "utf8"));
+      }
+      healthData.lastResetAt = new Date().toISOString();
+      fs.writeFileSync(HEALTH_JSON_PATH, JSON.stringify(healthData, null, 2), {
+        mode: 0o644,
+      });
+      log("Recorded lastResetAt in health.json");
+    } catch (err) {
+      log(
+        `Failed to write lastResetAt to health.json: ${err.message}`,
+        "ERROR",
+      );
+    }
+
+    log("Rebooting device in 3 seconds...");
+
+    // Reboot after brief delay to allow BLE response to be sent
+    setTimeout(() => {
+      try {
+        execSync("shutdown -r now", { shell: "/bin/bash" });
+      } catch (err) {
+        log(`Failed to reboot: ${err.message}`, "ERROR");
+      }
+    }, 3000);
+
+    return true;
+  } catch (err) {
+    log(`Failed to reset device: ${err.message}`, "ERROR");
+    return false;
+  }
+}
+
+/**
+ * Create Reset Characteristic (Write-Only)
+ * Writing any value removes all WiFi networks and reboots
+ */
+function createResetCharacteristic() {
+  return new bleno.Characteristic({
+    uuid: RESET_CHAR_UUID,
+    properties: ["write"],
+    onWriteRequest: (data, offset, withoutResponse, callback) => {
+      log("Device reset requested via BLE");
+      const success = resetDevice();
+      if (success) {
+        callback(bleno.Characteristic.RESULT_SUCCESS);
+      } else {
+        callback(bleno.Characteristic.RESULT_UNLIKELY_ERROR);
+      }
+    },
+  });
+}
+
+/**
  * Create WiFi Configuration Service
  */
 function createWiFiService() {
@@ -956,6 +1050,7 @@ function createWiFiService() {
       createCutterTypeCharacteristic(),
       createVolumeCharacteristic(),
       createDiagnosticsCharacteristic(),
+      createResetCharacteristic(),
     ],
   });
 }
