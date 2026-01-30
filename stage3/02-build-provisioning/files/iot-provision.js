@@ -83,6 +83,7 @@ function decodePayload(payload) {
 
 async function run() {
   const clientBootstrap = new io.ClientBootstrap();
+  let provisioningSucceeded = false;
 
   const configBuilder =
     iot.AwsIotMqttConnectionConfigBuilder.new_mtls_builder_from_path(
@@ -164,7 +165,7 @@ async function run() {
       // Save response
       fs.writeFileSync(AWS_DEVICE_FILE, message);
       log(`Registration response saved to ${AWS_DEVICE_FILE}`);
-      
+
       // Delete claim certificate and key
       try {
         fs.unlinkSync(CLAIM_CERT);
@@ -173,8 +174,9 @@ async function run() {
       } catch (err) {
         log(`Warning: Failed to delete claim credentials: ${err.message}`, "WARN");
       }
-      
+
       log("Provisioning completed successfully");
+      provisioningSucceeded = true;
       connection.disconnect();
     } else if (topic === TOPIC_REGISTER_REJECTED) {
       log(`Device registration rejected: ${message}`, "ERROR");
@@ -192,7 +194,15 @@ async function run() {
 
   connection.on("close", () => {
     log("Connection closed");
+    process.exit(provisioningSucceeded ? 0 : 1);
   });
+
+  // Timeout to prevent hanging indefinitely
+  const PROVISION_TIMEOUT_MS = 60000;
+  setTimeout(() => {
+    log("Provisioning timed out after 60 seconds", "ERROR");
+    process.exit(1);
+  }, PROVISION_TIMEOUT_MS);
 
   await connection.connect();
 }
