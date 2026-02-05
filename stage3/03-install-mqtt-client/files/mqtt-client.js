@@ -17,6 +17,7 @@ const LOG_FILE = `${EATABIT_DIR}/log/mqtt-client.log`;
 const JOBS_DIR = "/tmp";
 const HEALTH_JSON_PATH = "/usr/local/lib/eatabit/health.json";
 const DEVICE_READY_ESCPOS = `${EATABIT_DIR}/escpos/deviceReady.escpos`;
+const VERSION_FILE = `${EATABIT_DIR}/version`;
 
 // Job statuses
 JOB_EXECUTION_STATUSES = {
@@ -93,6 +94,19 @@ try {
   process.exit(1);
 }
 
+// Read image version from file
+let IMAGE_VERSION;
+try {
+  IMAGE_VERSION = fs.readFileSync(VERSION_FILE, "utf8").trim();
+  if (!IMAGE_VERSION) {
+    throw new Error("Version file is empty");
+  }
+  log(`Image version: ${IMAGE_VERSION}`);
+} catch (err) {
+  log(`Failed to read image version: ${err.message}`, "ERROR");
+  IMAGE_VERSION = "unknown";
+}
+
 // MQTT topics
 const TOPIC_PREFIX = `$aws/things/${DEVICE_ID}`;
 
@@ -113,9 +127,10 @@ const SHADOW_CONFIG = {
   },
   private: {
     name: "private",
-    properties: ["apiId"],
+    properties: ["apiId", "imageVersion"],
     state: {
       apiId: "",
+      imageVersion: IMAGE_VERSION,
     },
   },
 };
