@@ -50,3 +50,6 @@ else
   echo "Failed to create ${EATABIT_ROOT_DIR}/config"
   exit 1
 fi
+
+# Install image version file
+install -m 0444 "${BASE_DIR}/VERSION" "${ROOTFS_DIR}${EATABIT_ROOT_DIR}/version"
