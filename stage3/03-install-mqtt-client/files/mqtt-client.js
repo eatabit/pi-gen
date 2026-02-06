@@ -949,7 +949,7 @@ async function main() {
               clientToken: jobId, // Use jobId as clientToken
             });
 
-            connection.publish(
+            await connection.publish(
               `$aws/things/${DEVICE_ID}/jobs/${jobId}/update`,
               rejectedPayload,
               mqtt.QoS.AtLeastOnce,
@@ -979,11 +979,13 @@ async function main() {
             clientToken: jobId, // Use jobId as clientToken
           });
 
-          connection.publish(
+          await connection.publish(
             `$aws/things/${DEVICE_ID}/jobs/${jobId}/update`,
             successPayload,
             mqtt.QoS.AtLeastOnce,
           );
+
+          log(`Published QUEUED event for job ${jobId}`);
         } else {
           log(`Invalid job document or job ID in message`, "ERROR");
         }
@@ -1043,11 +1045,28 @@ async function main() {
                     clientToken: jobId, // Use jobId as clientToken
                   });
 
-                  connection.publish(
+                  await connection.publish(
                     `$aws/things/${DEVICE_ID}/jobs/${jobId}/update`,
                     downloadedPayload,
                     mqtt.QoS.AtLeastOnce,
                   );
+
+                  // Republish to custom topic for topic rule (reserved $aws/ topics can't trigger rules)
+                  const downloadedEventPayload = JSON.stringify({
+                    eventType: "JOB_EXECUTION",
+                    event: JOB_EVENTS.DOWNLOADED,
+                    jobId,
+                    thingName: DEVICE_ID,
+                    timestamp: Date.now(),
+                  });
+
+                  await connection.publish(
+                    `eatabit/things/${DEVICE_ID}/jobs/${jobId}/downloaded`,
+                    downloadedEventPayload,
+                    mqtt.QoS.AtLeastOnce,
+                  );
+
+                  log(`Published DOWNLOADED event for job ${jobId}`);
                 }
 
                 break;
@@ -1081,11 +1100,13 @@ async function main() {
                     clientToken: jobId, // Use jobId as clientToken
                   });
 
-                  connection.publish(
+                  await connection.publish(
                     `$aws/things/${DEVICE_ID}/jobs/${jobId}/update`,
                     printerOfflinePayload,
                     mqtt.QoS.AtLeastOnce,
                   );
+
+                  log(`Published PRINTER_OFFLINE event for job ${jobId}`);
 
                   return;
                 }
@@ -1102,11 +1123,30 @@ async function main() {
                   clientToken: jobId, // Use jobId as clientToken
                 });
 
-                connection.publish(
+                await connection.publish(
                   `$aws/things/${DEVICE_ID}/jobs/${jobId}/update`,
                   printedPayload,
                   mqtt.QoS.AtLeastOnce,
                 );
+
+                log(`Published PRINTED event for job ${jobId}`);
+
+                // Republish to custom topic for topic rule (reserved $aws/ topics can't trigger rules)
+                const printedEventPayload = JSON.stringify({
+                  eventType: "JOB_EXECUTION",
+                  event: JOB_EVENTS.PRINTED,
+                  jobId,
+                  thingName: DEVICE_ID,
+                  timestamp: Date.now(),
+                });
+
+                await connection.publish(
+                  `eatabit/things/${DEVICE_ID}/jobs/${jobId}/printed`,
+                  printedEventPayload,
+                  mqtt.QoS.AtLeastOnce,
+                );
+
+                log(`Republished PRINTED event to custom topic for job ${jobId}`);
 
                 break;
               default:
