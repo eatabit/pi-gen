@@ -900,6 +900,24 @@ function printDiagnostics() {
       lines.push(Buffer.from("No device data available\n"));
     }
 
+    if (deviceId && deviceId !== "Unknown") {
+      // Device ID QR code
+      const deviceIdData = Buffer.from(deviceId, "utf8");
+      const deviceIdDataLen = deviceIdData.length + 3;
+
+      // Set QR code model (Model 2)
+      lines.push(Buffer.from([GS, 0x28, 0x6b, 0x04, 0x00, 0x31, 0x41, 0x32, 0x00]));
+      // Set QR code size (module size 6)
+      lines.push(Buffer.from([GS, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x43, 0x06]));
+      // Set error correction level (L = 48)
+      lines.push(Buffer.from([GS, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x45, 0x30]));
+      // Store QR code data
+      lines.push(Buffer.from([GS, 0x28, 0x6b, deviceIdDataLen & 0xff, (deviceIdDataLen >> 8) & 0xff, 0x31, 0x50, 0x30]));
+      lines.push(deviceIdData);
+      // Print QR code
+      lines.push(Buffer.from([GS, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x51, 0x30]));
+    }
+
     // Printer serial number QR code
     lines.push(Buffer.from("--------------------------------\n"));
     lines.push(boldOn);
