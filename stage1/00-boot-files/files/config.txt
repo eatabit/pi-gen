@@ -49,3 +49,9 @@ otg_mode=1
 dtoverlay=dwc2,dr_mode=host
 
 [all]
+
+# Status LED - Solid blue on early boot (before kernel)
+# GPIO17=Red, GPIO22=Green, GPIO27=Blue
+gpio=17=op,dl
+gpio=22=op,dl
+gpio=27=op,dh
