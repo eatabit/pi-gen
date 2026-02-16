@@ -113,6 +113,7 @@ const TOPIC_PREFIX = `$aws/things/${DEVICE_ID}`;
 // Shadow topics (outbound)
 const PUBLIC_SHADOW_PREFIX = `${TOPIC_PREFIX}/shadow/name/public`;
 const PRIVATE_SHADOW_PREFIX = `${TOPIC_PREFIX}/shadow/name/private`;
+const HEALTH_SHADOW_PREFIX = `${TOPIC_PREFIX}/shadow/name/health`;
 
 // Shadow configuration
 const SHADOW_CONFIG = {
@@ -132,6 +133,11 @@ const SHADOW_CONFIG = {
       apiId: "",
       imageVersion: IMAGE_VERSION,
     },
+  },
+  health: {
+    name: "health",
+    properties: [], // Read-only from cloud side, no desired state
+    state: {},
   },
 };
 
@@ -416,6 +422,7 @@ const SUBSCRIBE_TOPICS = [
   // Shadow delta topics
   `${PUBLIC_SHADOW_PREFIX}/update/delta`,
   `${PRIVATE_SHADOW_PREFIX}/update/delta`,
+  `${HEALTH_SHADOW_PREFIX}/update/delta`,
 ];
 
 // Events topic (outbound)
@@ -454,7 +461,7 @@ async function publishEvent(eventType, eventData) {
   }
 }
 
-// Helper function to publish health data from health.json file
+// Helper function to publish health data via the health named shadow
 async function publishHealthData() {
   if (!mqttConnection) {
     log("Cannot publish health data: MQTT connection not established", "ERROR");
@@ -475,16 +482,12 @@ async function publishHealthData() {
     const healthContent = fs.readFileSync(HEALTH_JSON_PATH, "utf8");
     const healthData = JSON.parse(healthContent);
 
-    // Publish health data as event
-    const payload = JSON.stringify({
-      deviceId: DEVICE_ID,
-      timestamp: new Date().toISOString(),
-      eventType: "health_report",
-      data: healthData,
-    });
+    // Update the health shadow state with the latest health data
+    SHADOW_CONFIG.health.state = healthData;
 
-    await mqttConnection.publish(EVENTS_TOPIC, payload, mqtt.QoS.AtLeastOnce);
-    log(`Published health data to ${EVENTS_TOPIC}`);
+    // Publish via the health named shadow
+    await updateShadowReportedState("health");
+    log("Published health data to health shadow");
   } catch (err) {
     log(`Failed to publish health data: ${err.message}`, "ERROR");
     await publishEvent("health_data_error", {
@@ -812,6 +815,14 @@ async function main() {
       log("Requested shadow state for: private");
     } catch (err) {
       log(`Failed to request private shadow: ${err.message}`, "ERROR");
+    }
+
+    // For "health" shadow: publish current health data (device is source of truth)
+    try {
+      await publishHealthData();
+      log("Pushed health data to AWS health shadow");
+    } catch (err) {
+      log(`Failed to push health shadow: ${err.message}`, "ERROR");
     }
 
     // Publish an empty JSON payload to request the next job
@@ -1502,6 +1513,7 @@ async function main() {
     log("Initializing shadow reported states...");
     await updateShadowReportedState("public");
     await updateShadowReportedState("private");
+    await publishHealthData();
 
     // Watch cutter config file for BLE-initiated changes
     watchCutterConfigFile();
@@ -1509,10 +1521,7 @@ async function main() {
     // Watch volume config file for BLE-initiated changes
     watchVolumeConfigFile();
 
-    // Start health data publishing every 15 minutes (900000 ms)
-    // First publish immediately
-    await publishHealthData();
-
+    // Update health shadow every 15 minutes (900000 ms)
     const healthInterval = setInterval(async () => {
       await publishHealthData();
     }, 900000); // 15 minutes
