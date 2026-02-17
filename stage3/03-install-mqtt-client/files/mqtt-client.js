@@ -18,6 +18,7 @@ const JOBS_DIR = "/tmp";
 const HEALTH_JSON_PATH = "/usr/local/lib/eatabit/health.json";
 const DEVICE_READY_ESCPOS = `${EATABIT_DIR}/escpos/deviceReady.escpos`;
 const VERSION_FILE = `${EATABIT_DIR}/version`;
+const STATUS_LED_SCRIPT = `${EATABIT_DIR}/bin/status-led.sh`;
 
 // Job statuses
 JOB_EXECUTION_STATUSES = {
@@ -81,6 +82,27 @@ function log(message, level = "INFO") {
 
 // Initialize logging
 initializeLogFile();
+
+// Control status LED via systemd services
+function setStatusLedConnected() {
+  try {
+    execSync(
+      "systemctl stop status-led-ok.service 2>/dev/null; " +
+        `${STATUS_LED_SCRIPT} green`,
+      { shell: "/bin/bash" },
+    );
+  } catch (err) {
+    log(`Failed to set status LED to green: ${err.message}`, "ERROR");
+  }
+}
+
+function setStatusLedDisconnected() {
+  try {
+    execSync("systemctl restart status-led-ok.service", { shell: "/bin/bash" });
+  } catch (err) {
+    log(`Failed to restore status LED to flash-blue: ${err.message}`, "ERROR");
+  }
+}
 
 // Read device ID from file
 let DEVICE_ID;
@@ -220,8 +242,8 @@ const SPEAKER_CONFIG_CMD = Buffer.from([
 // Save parameter zone command
 const SAVE_PARAMS_CMD = Buffer.from([
   0x1b, 0x1c, 0x26, 0x20, 0x56, 0x31, 0x20, 0x64, 0x6f, 0x20, 0x22, 0x73, 0x61,
-  0x76, 0x65, 0x5f, 0x70, 0x61, 0x72, 0x61, 0x6d, 0x5f, 0x7a, 0x6f, 0x6e, 0x65, 0x22,
-  0x0d, 0x0a,
+  0x76, 0x65, 0x5f, 0x70, 0x61, 0x72, 0x61, 0x6d, 0x5f, 0x7a, 0x6f, 0x6e, 0x65,
+  0x22, 0x0d, 0x0a,
 ]);
 
 // Restart printer command (required after speaker ON/OFF changes)
@@ -737,6 +759,9 @@ function printDocument(jobId) {
     // Send raw ESC/POS directly to printer device (bypass CUPS)
     execSync(`cat "${filePathEscPos}" > /dev/usb/lp0`, { shell: "/bin/bash" });
 
+    // Wait for printer to finish processing raster data before querying status
+    execSync("sleep 2");
+
     // Post-print check
     const postStatus = checkPrinterStatus();
     if (!postStatus.ready) {
@@ -780,6 +805,7 @@ async function main() {
   // Connection event handlers
   connection.on("connect", async () => {
     log("Connected to AWS IoT Core");
+    setStatusLedConnected();
 
     // Print device ready receipt on first connection per power cycle
     if (!hasDeviceReadyPrinted) {
@@ -843,12 +869,14 @@ async function main() {
 
   connection.on("interrupt", (error) => {
     log(`Connection interrupted: ${error}`, "WARN");
+    setStatusLedDisconnected();
   });
 
   connection.on("resume", async (return_code, session_present) => {
     log(
       `Connection resumed. Return code: ${return_code}, Session present: ${session_present}`,
     );
+    setStatusLedConnected();
 
     // Publish an empty JSON payload to request the next job
     try {
@@ -868,6 +896,7 @@ async function main() {
 
   connection.on("disconnect", () => {
     log("Disconnected from AWS IoT Core");
+    setStatusLedDisconnected();
   });
 
   connection.on("error", (error) => {
@@ -1157,7 +1186,9 @@ async function main() {
                   mqtt.QoS.AtLeastOnce,
                 );
 
-                log(`Republished PRINTED event to custom topic for job ${jobId}`);
+                log(
+                  `Republished PRINTED event to custom topic for job ${jobId}`,
+                );
 
                 break;
               default:
