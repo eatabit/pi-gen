@@ -11,3 +11,4 @@ archive/*
 *.crt
 .DS_Store
 /tmp
+node_modules

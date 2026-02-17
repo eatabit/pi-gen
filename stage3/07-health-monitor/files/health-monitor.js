@@ -189,12 +189,30 @@ function getMqttClientStatus() {
       }
     });
 
+    const mainPID = statusMap["MainPID"] || null;
+
+    // MemoryCurrent requires MemoryAccounting=true; fall back to /proc RSS
+    let memoryUsage = statusMap["MemoryCurrent"] || null;
+    if ((!memoryUsage || memoryUsage === "[not set]") && mainPID && mainPID !== "0") {
+      try {
+        const rssKb = execSync(
+          `awk '/VmRSS/{print $2}' /proc/${mainPID}/status 2>/dev/null || echo ''`,
+          { encoding: "utf8", shell: "/bin/bash" }
+        ).trim();
+        if (rssKb) {
+          memoryUsage = String(parseInt(rssKb) * 1024); // convert KB to bytes
+        }
+      } catch (_) {
+        // ignore
+      }
+    }
+
     return {
       active: isActive === "active",
       enabled: isEnabled === "enabled",
       state: isActive,
-      mainPID: statusMap["MainPID"] || null,
-      memoryUsage: statusMap["MemoryCurrent"] || null,
+      mainPID,
+      memoryUsage,
       cpuUsageNsec: statusMap["CPUUsageNSec"] || null,
       restartCount: statusMap["NRestarts"] || "0",
       lastTimestamp: statusMap["StateChangeTimestamp"] || null,
