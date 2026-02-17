@@ -756,6 +756,9 @@ function printDocument(jobId) {
       throw new Error(preStatus.reason);
     }
 
+    // Delay after status check to let printer flush DLE EOT responses
+    execSync("sleep 1");
+
     // Send raw ESC/POS directly to printer device (bypass CUPS)
     execSync(`cat "${filePathEscPos}" > /dev/usb/lp0`, { shell: "/bin/bash" });
 
@@ -812,6 +815,8 @@ async function main() {
       try {
         const printerStatus = checkPrinterStatus();
         if (printerStatus.ready && fs.existsSync(DEVICE_READY_ESCPOS)) {
+          // Delay after status check to let printer flush DLE EOT responses
+          execSync("sleep 1");
           execSync(`cat "${DEVICE_READY_ESCPOS}" > /dev/usb/lp0`, {
             shell: "/bin/bash",
           });
