@@ -1380,11 +1380,12 @@ async function main() {
           {
             "commandId": "reset",
             "namespace": "AWS-IoT",
-            "payloadTemplate": "{\"commandId\": \"${aws:iot:commandexecution::parameter:commandId}\",\"reboot\": \"${aws:iot:commandexecution::parameter:reboot}\"}",
+            "payloadTemplate": "{\"commandId\": \"${aws:iot:commandexecution::parameter:commandId}\",\"action\": \"${aws:iot:commandexecution::parameter:action}\"}",
             "parameters": [
               {
-                "name": "reboot",
-                "type": "BOOLEAN"
+                "name": "action",
+                "type": "STRING",
+                "description": "Action to take after reset: 'reboot' or 'shutdown'"
               }
             ]
           }
@@ -1393,7 +1394,8 @@ async function main() {
         if (commandId === "reset") {
           log("Processing reset command...");
 
-          const reboot = data.reboot === true || data.reboot === "true";
+          const action = data.action || "reboot";
+          const reboot = action === "reboot";
           const RESET_DIR = "/usr/local/lib/eatabit/reset";
           const RESET_FLAG = `${RESET_DIR}/.reset-flag`;
 
@@ -1419,7 +1421,7 @@ async function main() {
               },
               result: {
                 resetFlagSet: { b: true },
-                rebooting: { b: reboot },
+                action: { s: action },
               },
             });
 
@@ -1429,8 +1431,8 @@ async function main() {
               mqtt.QoS.AtLeastOnce,
             );
 
-            // If reboot requested, reboot after brief delay to ensure response is sent
-            if (reboot) {
+            // Execute action after brief delay to ensure response is sent
+            if (action === "reboot") {
               log("Rebooting device in 5 seconds...");
               setTimeout(() => {
                 try {
@@ -1438,6 +1440,16 @@ async function main() {
                   log("Reboot command issued");
                 } catch (err) {
                   log(`Failed to reboot device: ${err.message}`, "ERROR");
+                }
+              }, 5000);
+            } else if (action === "shutdown") {
+              log("Shutting down device in 5 seconds...");
+              setTimeout(() => {
+                try {
+                  execSync("shutdown -h now", { shell: "/bin/bash" });
+                  log("Shutdown command issued");
+                } catch (err) {
+                  log(`Failed to shut down device: ${err.message}`, "ERROR");
                 }
               }, 5000);
             }
