@@ -7,13 +7,8 @@ echo "Installing device reset mechanism..."
 mkdir -p "${ROOTFS_DIR}/usr/local/lib/eatabit/reset"
 chmod 777 "${ROOTFS_DIR}/usr/local/lib/eatabit/reset"
 
-# Copy reset.escpos file if it exists
-if [ -f files/reset.escpos ]; then
-  echo "Installing reset.escpos file..."
-  install -D -m 0644 files/reset.escpos "${ROOTFS_DIR}/usr/local/lib/eatabit/reset/reset.escpos"
-else
-  echo "WARNING: files/reset.escpos not found"
-fi
+# Install pre-generated reset.escpos (regenerate with: node files/png-to-escpos.mjs files/reset.png files/reset.escpos)
+install -D -m 0644 files/reset.escpos "${ROOTFS_DIR}/usr/local/lib/eatabit/reset/reset.escpos"
 
 # Create the reset script
 echo "Creating reset script..."
@@ -90,7 +85,7 @@ cat > /etc/systemd/system/device-reset.service << 'SERVICE_EOF'
 [Unit]
 Description=Eatabit Device Reset
 DefaultDependencies=no
-After=local-fs.target NetworkManager.service
+After=local-fs.target NetworkManager.service boot-print.service
 Wants=NetworkManager.service
 Before=networking.service wifi-poweron.service ble-config.service
 

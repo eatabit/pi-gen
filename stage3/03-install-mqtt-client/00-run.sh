@@ -44,6 +44,8 @@ WorkingDirectory=/usr/local/lib/eatabit
 ExecStart=/usr/bin/node /usr/local/lib/eatabit/bin/mqtt-client.js
 Restart=on-failure
 RestartSec=10
+TimeoutStopSec=15
+KillMode=mixed
 StandardOutput=journal
 StandardError=journal
 
