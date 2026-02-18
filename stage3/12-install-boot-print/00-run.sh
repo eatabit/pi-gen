@@ -30,7 +30,11 @@ while [ ! -e "$PRINTER" ] && [ $WAITED -lt $MAX_WAIT ]; do
 done
 
 if [ -e "$PRINTER" ] && [ -f "$ESCPOS" ]; then
+  # Wait for printer firmware to initialize after USB enumeration
+  sleep 2
   cat "$ESCPOS" > "$PRINTER" 2>/dev/null || true
+  # Wait for printer to finish processing raster data before other services access it
+  sleep 3
 fi
 SCRIPT_EOF
 
