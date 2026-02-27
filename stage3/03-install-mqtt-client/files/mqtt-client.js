@@ -1284,11 +1284,14 @@ async function main() {
             log(`ngrok SSH forwarding established: ${ngrokUrl}`, "INFO");
 
             // Publish SUCCESS event to $aws/commands/things/<DEVICE_ID>/executions/<executionId>/response/json
+            // ngrokUrl is placed in reasonDescription because the events topic
+            // ($aws/events/commandExecution/+/+) includes statusReason but not result.
+            // The result field is only available on the response topic which cannot trigger IoT Rules.
             const successPayload = JSON.stringify({
               status: JOB_EXECUTION_STATUSES.SUCCEEDED,
               statusReason: {
                 reasonCode: "200",
-                reasonDescription: "Tunnel established successfully",
+                reasonDescription: ngrokUrl,
               },
               result: {
                 ngrokUrl: { s: ngrokUrl },
@@ -1313,7 +1316,9 @@ async function main() {
                 reasonCode: "500",
                 reasonDescription: "Failed to establish tunnel",
               },
-              result: {},
+              result: {
+                status: { s: "error" },
+              },
             });
 
             connection.publish(
@@ -1341,7 +1346,9 @@ async function main() {
                   reasonCode: "200",
                   reasonDescription: "Tunnel stopped successfully",
                 },
-                result: {},
+                result: {
+                  status: { s: "stopped" },
+                },
               });
 
               connection.publish(
@@ -1362,7 +1369,9 @@ async function main() {
                 reasonCode: "500",
                 reasonDescription: "Failed to stop tunnel",
               },
-              result: {},
+              result: {
+                status: { s: "error" },
+              },
             });
 
             connection.publish(
@@ -1463,7 +1472,9 @@ async function main() {
                 reasonCode: "500",
                 reasonDescription: err.message,
               },
-              result: {},
+              result: {
+                status: { s: "error" },
+              },
             });
 
             connection.publish(
@@ -1529,7 +1540,9 @@ async function main() {
                 reasonCode: "500",
                 reasonDescription: err.message,
               },
-              result: {},
+              result: {
+                status: { s: "error" },
+              },
             });
 
             connection.publish(
