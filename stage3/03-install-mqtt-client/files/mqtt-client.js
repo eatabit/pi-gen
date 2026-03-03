@@ -5,6 +5,20 @@ const path = require("path");
 const { mqtt, io, iot } = require("aws-iot-device-sdk-v2");
 const { execSync } = require("child_process");
 const ngrok = require("@ngrok/ngrok");
+// sd_notify via systemd-notify CLI — no native addons or libsystemd-dev required.
+// systemd-notify is pre-installed on all systemd-based systems.
+const SdNotify = {
+  ready() {
+    try {
+      execSync("systemd-notify --ready", { stdio: "ignore" });
+    } catch {}
+  },
+  watchdog() {
+    try {
+      execSync("systemd-notify WATCHDOG=1", { stdio: "ignore" });
+    } catch {}
+  },
+};
 
 // Configuration
 const EATABIT_DIR = "/usr/local/lib/eatabit";
@@ -458,8 +472,18 @@ let mqttConnection;
 // Global ngrok listener reference
 let ngrokListener = null;
 
-// Flag to track if device ready receipt has been printed (once per power cycle)
-let hasDeviceReadyPrinted = false;
+// Flag to track if device ready receipt has been printed (once per power cycle).
+// Persisted to /tmp so it survives service restarts but clears on reboot.
+const DEVICE_READY_FLAG = "/tmp/eatabit-device-ready-printed";
+let hasDeviceReadyPrinted = fs.existsSync(DEVICE_READY_FLAG);
+
+// Connection state tracking (Layer 1: Application Connection Watchdog)
+const WATCHDOG_INTERVAL_MS = 60_000; // Check every 60 seconds
+const MAX_DISCONNECT_DURATION_MS = 150_000; // 2.5 minutes
+let isConnected = false;
+let lastConnectedAt = null;
+let lastDisconnectedAt = null;
+let watchdogTriggerCount = 0;
 
 // Helper function to publish events
 async function publishEvent(eventType, eventData) {
@@ -505,6 +529,18 @@ async function publishHealthData() {
     const healthData = JSON.parse(healthContent);
 
     // Update the health shadow state with the latest health data
+    healthData.connection = {
+      isConnected,
+      lastConnectedAt: lastConnectedAt
+        ? new Date(lastConnectedAt).toISOString()
+        : null,
+      lastDisconnectedAt: lastDisconnectedAt
+        ? new Date(lastDisconnectedAt).toISOString()
+        : null,
+      watchdogTriggerCount,
+      uptimeMs:
+        isConnected && lastConnectedAt ? Date.now() - lastConnectedAt : 0,
+    };
     SHADOW_CONFIG.health.state = healthData;
 
     // Publish via the health named shadow
@@ -807,6 +843,8 @@ async function main() {
 
   // Connection event handlers
   connection.on("connect", async () => {
+    isConnected = true;
+    lastConnectedAt = Date.now();
     log("Connected to AWS IoT Core");
     setStatusLedConnected();
 
@@ -828,6 +866,9 @@ async function main() {
         log(`Failed to print device ready receipt: ${err.message}`, "ERROR");
       }
       hasDeviceReadyPrinted = true;
+      try {
+        fs.writeFileSync(DEVICE_READY_FLAG, "");
+      } catch {}
     }
 
     // For "public" shadow: load local config and push to AWS (device is source of truth)
@@ -873,13 +914,26 @@ async function main() {
   });
 
   connection.on("interrupt", (error) => {
-    log(`Connection interrupted: ${error}`, "WARN");
+    const connectedDuration = lastConnectedAt
+      ? Date.now() - lastConnectedAt
+      : 0;
+    isConnected = false;
+    lastDisconnectedAt = Date.now();
+    log(
+      `Connection interrupted: ${error} (was connected for ${connectedDuration}ms)`,
+      "WARN",
+    );
     setStatusLedDisconnected();
   });
 
   connection.on("resume", async (return_code, session_present) => {
+    const disconnectedDuration = lastDisconnectedAt
+      ? Date.now() - lastDisconnectedAt
+      : 0;
+    isConnected = true;
+    lastConnectedAt = Date.now();
     log(
-      `Connection resumed. Return code: ${return_code}, Session present: ${session_present}`,
+      `Connection resumed (was disconnected for ${disconnectedDuration}ms). Return code: ${return_code}, Session present: ${session_present}`,
     );
     setStatusLedConnected();
 
@@ -900,6 +954,8 @@ async function main() {
   });
 
   connection.on("disconnect", () => {
+    isConnected = false;
+    lastDisconnectedAt = Date.now();
     log("Disconnected from AWS IoT Core");
     setStatusLedDisconnected();
   });
@@ -1570,6 +1626,10 @@ async function main() {
     }
     log("Successfully subscribed to all topics");
 
+    // Notify systemd that the service is ready (Layer 2: Systemd Watchdog)
+    SdNotify.ready();
+    log("Sent sd_notify READY=1");
+
     // Initialize shadow reported state
     log("Initializing shadow reported states...");
     await updateShadowReportedState("public");
@@ -1582,6 +1642,40 @@ async function main() {
     // Watch volume config file for BLE-initiated changes
     watchVolumeConfigFile();
 
+    // Layer 1: Application Connection Watchdog
+    const watchdogInterval = setInterval(async () => {
+      // Layer 2: Send systemd watchdog ping unconditionally (process liveness)
+      SdNotify.watchdog();
+
+      if (!isConnected && lastDisconnectedAt) {
+        const disconnectedMs = Date.now() - lastDisconnectedAt;
+        log(`Watchdog check: disconnected for ${disconnectedMs}ms`, "WARN");
+
+        if (disconnectedMs > MAX_DISCONNECT_DURATION_MS) {
+          log(
+            `Connection watchdog triggered: disconnected for ${disconnectedMs}ms, exiting to trigger systemd restart`,
+            "ERROR",
+          );
+          watchdogTriggerCount++;
+
+          // Best-effort: publish event before exit (may fail if truly disconnected)
+          try {
+            await publishEvent("connectionWatchdogTriggered", {
+              disconnectedForMs: disconnectedMs,
+              lastConnectedAt: lastConnectedAt
+                ? new Date(lastConnectedAt).toISOString()
+                : null,
+              triggeredAt: new Date().toISOString(),
+            });
+          } catch (_) {
+            // Expected to fail if disconnected
+          }
+
+          process.exit(1);
+        }
+      }
+    }, WATCHDOG_INTERVAL_MS);
+
     // Update health shadow every 15 minutes (900000 ms)
     const healthInterval = setInterval(async () => {
       await publishHealthData();
@@ -1590,6 +1684,7 @@ async function main() {
       process.on("SIGINT", async () => {
         log("Received SIGINT, disconnecting...");
         clearInterval(healthInterval);
+        clearInterval(watchdogInterval);
 
         // Force exit after 10 seconds if graceful shutdown hangs
         const forceExit = setTimeout(() => {
@@ -1611,6 +1706,7 @@ async function main() {
       process.on("SIGTERM", async () => {
         log("Received SIGTERM, disconnecting...");
         clearInterval(healthInterval);
+        clearInterval(watchdogInterval);
 
         // Force exit after 10 seconds if graceful shutdown hangs
         const forceExit = setTimeout(() => {
