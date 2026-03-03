@@ -6,12 +6,12 @@
 - ./build-docker.sh
 
 ## SCP command
-- scp -i ~/.ssh/id_raspberry -o "StrictHostKeyChecking=no" -o "UserKnownHostsFile=/dev/null" /Users/gregoleksiak/repos/eatabit/iot/iot-pi/stage3/10-install-ready-print/files/deviceReady.escpos eatabit@192.168.1.111:/tmp/deviceReady.escpos
+- scp -i ~/.ssh/id_raspberry -o "StrictHostKeyChecking=no" -o "UserKnownHostsFile=/dev/null" /Users/gregoleksiak/repos/eatabit/iot/iot-pi/stage3/09-install-reset/files/reset.escpos eatabit@192.168.1.80:/tmp/reset.escpos
 
 ## Test print
 - echo "Test print" > /dev/usb/lp0
 - echo "<md>TEST PRINT</md>" > /dev/usb/lp0
-- cat /tmp/booting.escpos > /dev/usb/lp0
+- cat /tmp/reset.escpos > /dev/usb/lp0
 
 ## Tail the mqtt-client service log
 - tail -f /usr/local/lib/eatabit/log/mqtt-client.log
