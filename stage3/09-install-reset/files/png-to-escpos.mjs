@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 
 /**
- * Convert a PNG image to ESC/POS raster print data.
+ * Convert reset.png to ESC/POS raster print data.
  *
- * Usage: node png-to-escpos.mjs <input.png> <output.escpos>
+ * Usage: node png-to-escpos.mjs
  */
 
 import { readFile, writeFile } from "node:fs/promises";
@@ -17,12 +17,8 @@ const iotBackendDir = resolve(__dirname, "../../../../iot-backend");
 const require = createRequire(iotBackendDir + "/");
 const sharp = require("sharp");
 
-const [inputPath, outputPath] = process.argv.slice(2);
-
-if (!inputPath || !outputPath) {
-  console.error("Usage: node png-to-escpos.mjs <input.png> <output.escpos>");
-  process.exit(1);
-}
+const inputPath = resolve(__dirname, "../../../assets/png/reset.png");
+const outputPath = resolve(__dirname, "reset.escpos");
 
 const GS = 0x1d;
 const ESC = 0x1b;

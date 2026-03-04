@@ -20,7 +20,7 @@ import sharp from "sharp";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-const LOGO_PATH = resolve(__dirname, "../../../iot-assets/images/logos/eatabit-ai_1024_1024_black_white_outlined_booting.png");
+const LOGO_PATH = resolve(__dirname, "../../assets/png/booting.png");
 const OUT_PATH = resolve(__dirname, "files/booting.escpos");
 
 // ESC/POS constants
