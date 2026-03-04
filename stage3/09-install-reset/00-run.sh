@@ -7,7 +7,7 @@ echo "Installing device reset mechanism..."
 mkdir -p "${ROOTFS_DIR}/usr/local/lib/eatabit/reset"
 chmod 777 "${ROOTFS_DIR}/usr/local/lib/eatabit/reset"
 
-# Install pre-generated reset.escpos (regenerate with: node files/png-to-escpos.mjs files/reset.png files/reset.escpos)
+# Install pre-generated reset.escpos (regenerate with: node files/png-to-escpos.mjs)
 install -D -m 0644 files/reset.escpos "${ROOTFS_DIR}/usr/local/lib/eatabit/reset/reset.escpos"
 
 # Create the reset script
