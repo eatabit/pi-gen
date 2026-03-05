@@ -164,9 +164,10 @@ const SHADOW_CONFIG = {
   },
   private: {
     name: "private",
-    properties: ["apiId", "imageVersion"],
+    properties: ["apiId", "deviceId", "imageVersion"],
     state: {
       apiId: "",
+      deviceId: "",
       imageVersion: IMAGE_VERSION,
     },
   },
