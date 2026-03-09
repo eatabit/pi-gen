@@ -710,6 +710,78 @@ function formatBytes(bytes) {
 }
 
 /**
+ * Query live WiFi state from system commands
+ */
+function getWifiConfiguration() {
+  try {
+    // Get connected WiFi SSID
+    const iwconfig = execSync("iwconfig wlan0 2>/dev/null || echo ''", {
+      encoding: "utf8",
+      shell: "/bin/bash",
+    }).trim();
+
+    const ssidMatch = iwconfig.match(/ESSID:"([^"]*)"/);
+    const ssid = ssidMatch ? ssidMatch[1] : null;
+
+    // Get WiFi signal strength
+    const iwlist = execSync(
+      "iwlist wlan0 last 2>/dev/null | grep 'Signal level' || echo ''",
+      { encoding: "utf8", shell: "/bin/bash" }
+    ).trim();
+
+    const signalMatch = iwlist.match(/Signal level[=:]\s*([-\d]+)/);
+    const signalStrength = signalMatch ? parseInt(signalMatch[1]) : null;
+
+    // Get IP configuration
+    const ipaddr = execSync(
+      "ip addr show wlan0 2>/dev/null | grep 'inet ' | awk '{print $2}' || echo ''",
+      { encoding: "utf8", shell: "/bin/bash" }
+    )
+      .trim()
+      .split("\n")[0];
+
+    // Get gateway
+    const gateway = execSync(
+      "ip route show 2>/dev/null | grep default | awk '{print $3}' || echo ''",
+      { encoding: "utf8", shell: "/bin/bash" }
+    )
+      .trim()
+      .split("\n")[0];
+
+    // Get DNS servers
+    const dns = execSync(
+      "cat /etc/resolv.conf 2>/dev/null | grep nameserver | awk '{print $2}' || echo ''",
+      { encoding: "utf8", shell: "/bin/bash" }
+    )
+      .trim()
+      .split("\n")
+      .filter((x) => x);
+
+    // Get WiFi connection quality
+    const quality = execSync(
+      "iwconfig wlan0 2>/dev/null | grep 'Link Quality' | sed 's/.*Link Quality=\\([^ ]*\\).*/\\1/' || echo ''",
+      { encoding: "utf8", shell: "/bin/bash" }
+    )
+      .trim();
+
+    return {
+      connected: ssid !== null && ssid !== "",
+      ssid: ssid,
+      ipAddress: ipaddr || null,
+      gateway: gateway || null,
+      dnsServers: dns,
+      signalStrength: signalStrength,
+      linkQuality: quality || null,
+    };
+  } catch (err) {
+    return {
+      connected: false,
+      error: err.message,
+    };
+  }
+}
+
+/**
  * Print diagnostics page to thermal printer
  * Reads health.json and formats it for thermal output with partial cut
  */
@@ -832,9 +904,8 @@ function printDiagnostics() {
     lines.push(Buffer.from("NETWORK\n"));
     lines.push(boldOff);
 
-    if (healthData.network && healthData.network.wifi) {
-      const wifi = healthData.network.wifi;
-
+    const wifi = getWifiConfiguration();
+    if (wifi) {
       // Connection status
       lines.push(
         Buffer.from(`WiFi: ${wifi.connected ? "Connected" : "Disconnected"}\n`),

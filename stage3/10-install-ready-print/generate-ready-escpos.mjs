@@ -33,8 +33,8 @@ const FEED_LINES = (n) => Buffer.from([ESC, 0x64, n]); // ESC d n
 
 // Target width for thermal printer (576px = 80mm @ 203 DPI)
 const TARGET_WIDTH = 576;
-// Scale logo to full paper width
-const LOGO_WIDTH = TARGET_WIDTH;
+// Scale logo to 90% of paper width
+const LOGO_WIDTH = Math.round(TARGET_WIDTH * 0.9);
 
 async function pngToRasterData(pngBuf, targetWidth) {
   const image = sharp(pngBuf);
