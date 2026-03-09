@@ -18,7 +18,7 @@ const TEMPLATE_NAME = "templateProvisioning";
 const DEVICE_ID = fs
   .readFileSync("/proc/cpuinfo", "utf8")
   .match(/Serial\s*:\s*(\w+)/)[1]; // Pi serial
-const VERSION = "1.0.0";
+const VERSION = fs.readFileSync(`${EATABIT_ROOT_DIR}/version`, "utf8").trim();
 const AWS_DEVICE_FILE = `${EATABIT_ROOT_DIR}/config/aws-device.json`;
 
 const LOG_FILE = `${EATABIT_ROOT_DIR}/log/provision.log`;
