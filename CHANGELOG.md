@@ -7,16 +7,17 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Fixed
-
-- Always set eatabit user shell to `/bin/bash` — upstream pi-gen change (`4b9cd15`) set shell to `nologin` when no password is configured, breaking SSH key-only login
-- Validate presigned S3 URL before printing — use `curl --fail` to detect expired URLs instead of silently printing S3 XML error responses
-
 ## [1.0.2] — 2026-03-10
+
+### Added
+
+- Disable printer wifi radio via ESC/POS command on first boot
 
 ### Fixed
 
 - Revert eatabit user home directory to default `/home/eatabit` — custom homedir (`/usr/local/lib/eatabit`) broke SSH public key authentication
+- Always set eatabit user shell to `/bin/bash` — upstream pi-gen change (`4b9cd15`) set shell to `nologin` when no password is configured, breaking SSH key-only login
+- Validate presigned S3 URL before printing — use `curl --fail` to detect expired URLs instead of silently printing S3 XML error responses
 
 ## [1.0.1] — 2026-03-09
 
