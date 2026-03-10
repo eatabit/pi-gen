@@ -56,7 +56,6 @@ users:
   - default
   - name: eatabit
     gecos: "eatabit User"
-    homedir: /usr/local/lib/eatabit
     primary_group: eatabit
     groups: users
     ssh_import_id: []
