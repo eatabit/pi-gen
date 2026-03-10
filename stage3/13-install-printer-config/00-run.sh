@@ -4,7 +4,7 @@
 # Install printer configuration service
 # Sends ESC/POS configuration commands to the printer on first boot
 # Delete /usr/local/lib/eatabit/escpos/printer-config/.configured and reboot to re-run
-# Currently configures: buzzer (disable human voice, enable buzzer)
+# Currently configures: buzzer (disable human voice, enable buzzer), wifi (disable wifi radio)
 # ------------------------------------------------------------------------------
 
 echo "Installing printer configuration service..."
@@ -22,6 +22,13 @@ printf '\x1b\x1c\x26\x20\x56\x31\x20\x64\x6f\x20\x22\x73\x61\x76\x65\x5f\x70\x61
 printf '\x1b\x1c\x26\x20\x56\x31\x20\x64\x6f\x20\x22\x72\x65\x73\x65\x74\x5f\x70\x72\x69\x6e\x74\x65\x72\x22\x0d\x0a' >> "${ROOTFS_DIR}/usr/local/lib/eatabit/escpos/printer-config/buzzer.bin"
 
 chmod 644 "${ROOTFS_DIR}/usr/local/lib/eatabit/escpos/printer-config/buzzer.bin"
+
+# Generate wifi-disable configuration binary — turns off printer wifi radio
+# Source: iot-pi/docs/ESCPOS/Custom Setup Commands.md
+printf '\x1b\x1c\x26\x20\x56\x31\x20\x73\x65\x74\x6b\x65\x79\x0d\x0a\x01\x84\x00\x01\x00' > "${ROOTFS_DIR}/usr/local/lib/eatabit/escpos/printer-config/wifi-disable.bin"
+printf '\x1b\x1c\x26\x20\x56\x31\x20\x64\x6f\x20\x22\x73\x61\x76\x65\x5f\x70\x61\x72\x61\x6d\x5f\x7a\x6f\x6e\x65\x22\x0d\x0a' >> "${ROOTFS_DIR}/usr/local/lib/eatabit/escpos/printer-config/wifi-disable.bin"
+
+chmod 644 "${ROOTFS_DIR}/usr/local/lib/eatabit/escpos/printer-config/wifi-disable.bin"
 
 # Create printer config script that sends all .bin files to the printer
 cat > "${ROOTFS_DIR}/usr/local/lib/eatabit/bin/printer-config.sh" << 'SCRIPT_EOF'
