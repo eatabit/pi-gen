@@ -48,6 +48,7 @@ JOB_EVENTS = {
   DOWNLOADED: "DOWNLOADED",
   PRINTED: "PRINTED",
   EXPIRED: "EXPIRED",
+  STALE_URL: "STALE_URL",
   PRINTER_OFFLINE: "PRINTER_OFFLINE",
 };
 
@@ -752,7 +753,7 @@ function downloadDocument(filePath) {
 
     // Download the job body document using curl
     const escposJobPath = path.join(JOBS_DIR, `${jobId}.escpos`);
-    execSync(`curl -s "${jobDownloadUri}" -o "${escposJobPath}"`, {
+    execSync(`curl -sf "${jobDownloadUri}" -o "${escposJobPath}"`, {
       shell: "/bin/bash",
     });
 
@@ -762,10 +763,12 @@ function downloadDocument(filePath) {
   } catch (err) {
     log(`Failed to download document: ${err.message}`, "ERROR");
 
-    // Return the specific error for handling
     if (err.message === JOB_EVENTS.EXPIRED) {
       return JOB_EVENTS.EXPIRED;
     }
+
+    // curl --fail exits with code 22 on HTTP errors (e.g., expired presigned URL)
+    return JOB_EVENTS.STALE_URL;
   }
 }
 
@@ -1169,6 +1172,34 @@ async function main() {
                   );
 
                   log(`Published DOWNLOADED event for job ${jobId}`);
+                }
+
+                if (downloadResult === JOB_EVENTS.STALE_URL) {
+                  log(
+                    `Job ${jobId} has a stale presigned URL, marking as FAILED`,
+                  );
+
+                  const staleUrlPayload = JSON.stringify({
+                    status: JOB_EXECUTION_STATUSES.FAILED,
+                    statusDetails: {
+                      event: JOB_EVENTS.STALE_URL,
+                      reason: "Presigned URL expired",
+                    },
+                    expectedVersion: jobVersionNumber,
+                    includeJobExecutionState: true,
+                    includeJobDocument: false,
+                    clientToken: jobId,
+                  });
+
+                  await connection.publish(
+                    `$aws/things/${DEVICE_ID}/jobs/${jobId}/update`,
+                    staleUrlPayload,
+                    mqtt.QoS.AtLeastOnce,
+                  );
+
+                  await publishEvent(JOB_EVENTS.STALE_URL, { jobId });
+
+                  break;
                 }
 
                 break;
