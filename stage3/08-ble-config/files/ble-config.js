@@ -807,6 +807,16 @@ function printDiagnostics() {
       log("Could not read device ID", "WARN");
     }
 
+    // Read build version
+    let buildVersion = "Unknown";
+    try {
+      buildVersion = fs
+        .readFileSync("/usr/local/lib/eatabit/version", "utf8")
+        .trim();
+    } catch (e) {
+      log("Could not read build version", "WARN");
+    }
+
     // ESC/POS commands
     const ESC = 0x1b;
     const GS = 0x1d;
@@ -846,6 +856,7 @@ function printDiagnostics() {
     // Timestamp
     lines.push(Buffer.from(`Date: ${new Date().toLocaleString()}\n`));
     lines.push(Buffer.from(`Device: ${deviceId}\n`));
+    lines.push(Buffer.from(`Version: ${buildVersion}\n`));
     lines.push(Buffer.from("--------------------------------\n"));
 
     // System info
