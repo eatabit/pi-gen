@@ -7,6 +7,12 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.0.3] — 2026-03-10
+
+### Added
+
+- Print build version on diagnostics page
+
 ## [1.0.2] — 2026-03-10
 
 ### Added
