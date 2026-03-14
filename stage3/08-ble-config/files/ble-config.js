@@ -945,25 +945,24 @@ function printDiagnostics() {
 
     lines.push(Buffer.from("--------------------------------\n"));
 
-    // Services info
+    // Services info (live systemctl queries)
     lines.push(boldOn);
     lines.push(Buffer.from("SERVICES\n"));
     lines.push(boldOff);
 
-    if (healthData.services) {
-      for (const [name, svc] of Object.entries(healthData.services)) {
-        // Service status is an object with {active, enabled, state, ...}
-        if (typeof svc === "object" && svc !== null) {
-          const statusStr = svc.active ? "Running" : "Stopped";
-          lines.push(Buffer.from(`${name}: ${statusStr}\n`));
-        } else {
-          // Fallback for simple boolean
-          const statusStr = svc ? "Running" : "Stopped";
-          lines.push(Buffer.from(`${name}: ${statusStr}\n`));
-        }
+    const serviceNames = ["mqtt-client"];
+    for (const svcName of serviceNames) {
+      let isActive = false;
+      try {
+        const result = execSync(
+          `systemctl is-active ${svcName} 2>/dev/null || echo 'inactive'`,
+          { encoding: "utf8", shell: "/bin/bash" },
+        ).trim().toLowerCase();
+        isActive = result === "active";
+      } catch (e) {
+        // default to false
       }
-    } else {
-      lines.push(Buffer.from("No service data available\n"));
+      lines.push(Buffer.from(`${svcName}: ${isActive ? "Running" : "Stopped"}\n`));
     }
 
     lines.push(Buffer.from("--------------------------------\n"));
