@@ -7,6 +7,10 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Diagnostic sheet now queries live systemctl status for services instead of reading stale health.json snapshot
+
 ## [1.0.3] — 2026-03-10
 
 ### Added
