@@ -30,6 +30,7 @@
 
 ## View the log for the device-reset service
 - journalctl -u mqtt-client -f
+- journalctl -u printer-config -f
 
 ## Tail the ble-server log
 - tail -f /usr/local/lib/eatabit/log/ble-config.log

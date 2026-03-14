@@ -3,7 +3,8 @@
 # ------------------------------------------------------------------------------
 # Install printer configuration service
 # Sends ESC/POS configuration commands to the printer on first boot
-# Delete /usr/local/lib/eatabit/escpos/printer-config/.configured and reboot to re-run
+# Uses per-command .configured markers — delete individual markers to re-run specific commands
+# Handles printer reboots between commands (e.g., buzzer.bin triggers reset_printer)
 # Currently configures: buzzer (disable human voice, enable buzzer), wifi (disable wifi radio)
 # ------------------------------------------------------------------------------
 
@@ -35,38 +36,72 @@ cat > "${ROOTFS_DIR}/usr/local/lib/eatabit/bin/printer-config.sh" << 'SCRIPT_EOF
 #!/bin/bash
 PRINTER="/dev/usb/lp0"
 CONFIG_DIR="/usr/local/lib/eatabit/escpos/printer-config"
-CONFIGURED_FLAG="$CONFIG_DIR/.configured"
 MAX_WAIT=30
 
-# Skip if already configured — delete flag file to re-run
-if [ -f "$CONFIGURED_FLAG" ]; then
-  echo "Printer already configured, skipping"
-  exit 0
-fi
+# Wait for printer to appear, up to MAX_WAIT seconds
+# Returns 0 if printer found, 1 if timeout
+wait_for_printer() {
+  local waited=0
+  while [ ! -e "$PRINTER" ] && [ $waited -lt $MAX_WAIT ]; do
+    sleep 1
+    waited=$((waited + 1))
+  done
+  [ -e "$PRINTER" ]
+}
 
-# Wait for printer to appear
-WAITED=0
-while [ ! -e "$PRINTER" ] && [ $WAITED -lt $MAX_WAIT ]; do
-  sleep 1
-  WAITED=$((WAITED + 1))
-done
+# Track if any commands were sent
+commands_sent=0
+commands_skipped=0
 
-if [ ! -e "$PRINTER" ]; then
-  echo "Printer not found after ${MAX_WAIT}s, skipping configuration"
-  exit 0
-fi
-
-# Send all config files to printer
 for config_file in "$CONFIG_DIR"/*.bin; do
   [ -f "$config_file" ] || continue
+
+  # Skip if this command was already applied
+  if [ -f "$config_file.configured" ]; then
+    echo "Already configured: $(basename "$config_file"), skipping"
+    commands_skipped=$((commands_skipped + 1))
+    continue
+  fi
+
+  # Wait for printer (handles previous command rebooting it)
+  if ! wait_for_printer; then
+    echo "Printer not found after ${MAX_WAIT}s, deferring remaining commands to next boot"
+    exit 0
+  fi
+
+  # Send command
   echo "Sending printer config: $(basename "$config_file")"
   cat "$config_file" > "$PRINTER" 2>/dev/null || true
-  sleep 2
+  commands_sent=$((commands_sent + 1))
+
+  # Check if printer reboots (disappears within 5s)
+  printer_rebooted=false
+  for i in $(seq 1 5); do
+    if [ ! -e "$PRINTER" ]; then
+      printer_rebooted=true
+      break
+    fi
+    sleep 1
+  done
+
+  if [ "$printer_rebooted" = true ]; then
+    echo "Printer rebooted after $(basename "$config_file"), waiting for recovery..."
+    if ! wait_for_printer; then
+      echo "Printer did not recover after ${MAX_WAIT}s, deferring remaining commands to next boot"
+      # Don't mark this command — it may not have completed
+      exit 0
+    fi
+    sleep 2  # firmware init
+  else
+    sleep 2  # normal delay between commands
+  fi
+
+  # Mark this command as configured
+  touch "$config_file.configured"
+  echo "Configured: $(basename "$config_file")"
 done
 
-# Mark as configured
-touch "$CONFIGURED_FLAG"
-echo "Printer configuration complete"
+echo "Printer configuration complete (sent=$commands_sent, skipped=$commands_skipped)"
 SCRIPT_EOF
 
 chmod 755 "${ROOTFS_DIR}/usr/local/lib/eatabit/bin/printer-config.sh"
