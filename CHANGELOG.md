@@ -7,6 +7,18 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Wifi disable ESC/POS command (`wifi-disable.bin`) to turn off printer wifi radio
+- Documentation for wifi disable command sequence (`docs/ESCPOS/Custom Setup Commands.md`)
+- `printer-config` journalctl command to Raspberry Commands reference
+- Stage README for `stage3/13-install-printer-config`
+
+### Changed
+
+- Printer config service uses per-command marker files instead of single `.configured` flag — each command can be retried individually
+- Printer config service detects and recovers from printer reboots between commands
+
 ### Fixed
 
 - Diagnostic sheet now queries live systemctl status for services instead of reading stale health.json snapshot
