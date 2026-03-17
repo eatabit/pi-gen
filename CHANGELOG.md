@@ -7,6 +7,8 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.0.4] — 2026-03-17
+
 ### Added
 
 - Wifi disable ESC/POS command (`wifi-disable.bin`) to turn off printer wifi radio
