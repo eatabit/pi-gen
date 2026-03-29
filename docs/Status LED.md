@@ -1,17 +1,15 @@
 # RPi Zero 2 W Boot Status LED
 
 ## Hardware
-- LED: WP154A4SUREQBFZGC (Kingbright T-1 3/4 RGB, **common cathode**)
-- Pin 1: Red anode, Pin 2: Common cathode, Pin 3: Green anode, Pin 4: Blue anode
-- Vf: Red 1.9V typ, Blue 3.3V typ, Green 3.3V typ
-- Max IF: Red 30mA, Blue 30mA, Green 25mA
-- GPIO logic: HIGH = ON, LOW = OFF
+- LED hat PCB with RGB LED (**common anode**), see schematic: `docs/LED hat/image.png`
+- Common anode tied to +3.3V, GPIO pins sink current through resistors
+- GPIO logic: LOW = ON, HIGH = OFF (active low)
 
 ## Wiring
-- GPIO 17 → 150Ω → Red (Pin 1)
-- GPIO 22 → 100Ω → Green (Pin 4)
-- GPIO 27 → 100Ω → Blue (Pin 3)
-- GND → Cathode (Pin 2)
+- +3.3V → Common anode (J1 Pin 1)
+- GPIO 10 → Blue (J1 Pin 2), R2 = 220Ω
+- GPIO 9 → Red (J1 Pin 3), R3 = 10Ω
+- GPIO 11 → Green (J1 Pin 4), R1 = 10Ω
 
 ## Boot Behavior
 - Solid blue on early boot (config.txt gpio directive, before kernel)

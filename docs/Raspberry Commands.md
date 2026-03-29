@@ -19,7 +19,7 @@
 
 ## Tail the mqtt-client service log
 - tail -f /usr/local/lib/eatabit/log/mqtt-client.log
-- tail -n 500 /usr/local/lib/eatabit/log/mqtt-client.log
+- tail -n 200 /usr/local/lib/eatabit/log/mqtt-client.log
 
 ## Reload systemctl
 - systemctl daemon-reload
