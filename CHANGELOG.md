@@ -7,6 +7,13 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.0.6] — 2026-03-29
+
+### Fixed
+
+- Add sudo and hardware groups to cloud-init eatabit user — user was missing `sudo`, `dialout`, `gpio`, `spi`, `i2c`, and other groups assigned by pi-gen
+- Enable passwordless sudo for eatabit user via cloud-init `sudo` directive
+
 ## [1.0.5] — 2026-03-29
 
 ### Fixed

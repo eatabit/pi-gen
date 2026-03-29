@@ -57,7 +57,8 @@ users:
   - name: eatabit
     gecos: "eatabit User"
     primary_group: eatabit
-    groups: users
+    groups: users, sudo, adm, dialout, cdrom, audio, video, plugdev, input, gpio, spi, i2c, netdev, render
+    sudo: ALL=(ALL) NOPASSWD:ALL
     ssh_import_id: []
     lock_passwd: false
     ssh_authorized_keys:
