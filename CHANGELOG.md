@@ -9,6 +9,10 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [1.0.5] — 2026-03-29
 
+### Fixed
+
+- Disable "Sound after cutting" in buzzer config (setkey 0xDB) — the one-shot cut beep was overriding the optical sensor's continuous buzzer when a second order printed before paper was pulled
+
 ## [1.0.4] — 2026-03-17
 
 ### Added
