@@ -7,6 +7,13 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.1] — 2026-04-09
+
+### Fixed
+
+- Enable infinite WiFi autoconnect retries (`connection.autoconnect-retries=0`) for all WiFi profiles — devices in poor-signal locations would permanently disconnect after 4 failed reconnect attempts (NetworkManager default) and never recover without a reboot
+- Explicitly set `connection.autoconnect=true` on WiFi profiles created via BLE config and cloud-init to guard against profile corruption
+
 ## [1.0.6] — 2026-03-29
 
 ### Fixed
