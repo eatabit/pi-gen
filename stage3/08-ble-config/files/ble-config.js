@@ -360,11 +360,11 @@ function applyWiFiConfig() {
     if (!currentPassword || currentPassword.length === 0) {
       // Open network - no security settings
       log(`Creating open (no security) connection for ${currentSSID}`);
-      createCommand = `nmcli con add type wifi con-name "${currentSSID}" ifname wlan0 ssid "${currentSSID}" 2>&1`;
+      createCommand = `nmcli con add type wifi con-name "${currentSSID}" ifname wlan0 ssid "${currentSSID}" connection.autoconnect yes connection.autoconnect-retries 0 2>&1`;
     } else {
       // Network with password - try WPA-PSK (covers WPA, WPA2, WPA3)
       log(`Creating WPA/WPA2/WPA3 secured connection for ${currentSSID}`);
-      createCommand = `nmcli con add type wifi con-name "${currentSSID}" ifname wlan0 ssid "${currentSSID}" wifi-sec.key-mgmt wpa-psk wifi-sec.psk "${currentPassword}" 2>&1`;
+      createCommand = `nmcli con add type wifi con-name "${currentSSID}" ifname wlan0 ssid "${currentSSID}" wifi-sec.key-mgmt wpa-psk wifi-sec.psk "${currentPassword}" connection.autoconnect yes connection.autoconnect-retries 0 2>&1`;
     }
 
     log(`Creating new connection profile for ${currentSSID}`);
@@ -379,7 +379,7 @@ function applyWiFiConfig() {
       // If WPA-PSK fails, try WEP as fallback
       if (currentPassword && currentPassword.length > 0) {
         log(`WPA-PSK failed, attempting WEP fallback for ${currentSSID}`);
-        const wepCommand = `nmcli con add type wifi con-name "${currentSSID}" ifname wlan0 ssid "${currentSSID}" wifi-sec.key-mgmt none wifi-sec.wep-key0 "${currentPassword}" 2>&1`;
+        const wepCommand = `nmcli con add type wifi con-name "${currentSSID}" ifname wlan0 ssid "${currentSSID}" wifi-sec.key-mgmt none wifi-sec.wep-key0 "${currentPassword}" connection.autoconnect yes connection.autoconnect-retries 0 2>&1`;
         try {
           createResult = execSync(wepCommand, {
             encoding: "utf8",
