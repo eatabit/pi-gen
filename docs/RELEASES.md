@@ -18,14 +18,31 @@ Follow [Semantic Versioning](https://semver.org/):
 
 ## Release workflow
 
+## Hardware lines
+
+Two independent firmware lines map to physical hardware versions:
+
+| Branch | Hardware | Version range |
+| --- | --- | --- |
+| `hw/1.0` | Original | `v1.0.x` |
+| `hw/1.1` | LED hat PCB | `v1.1.x` |
+
+Each line has its own `VERSION` file and `CHANGELOG.md` that diverge independently.
+
 ### 1. Create a release branch
 
-Branch from `arm64`:
+Branch from the appropriate `hw/*` branch:
 
 ```bash
-git checkout arm64
-git pull origin arm64
-git checkout -b release/1.1.0
+# For a 1.0.x patch:
+git checkout hw/1.0
+git pull origin hw/1.0
+git checkout -b release/1.0.7
+
+# For a 1.1.x patch:
+git checkout hw/1.1
+git pull origin hw/1.1
+git checkout -b release/1.1.1
 ```
 
 ### 2. Make changes
@@ -35,7 +52,7 @@ Develop and commit on the release branch.
 ### 3. Update VERSION
 
 ```bash
-echo "1.1.0" > VERSION
+echo "1.0.7" > VERSION
 ```
 
 ### 4. Update CHANGELOG.md
@@ -43,7 +60,7 @@ echo "1.1.0" > VERSION
 Move items from `[Unreleased]` into a new version section:
 
 ```markdown
-## [1.1.0] — 2026-04-15
+## [1.0.7] — 2026-04-15
 
 ### Added
 - ...
@@ -56,29 +73,29 @@ Move items from `[Unreleased]` into a new version section:
 
 ```bash
 git add VERSION CHANGELOG.md
-git commit -m "release: 1.1.0"
+git commit -m "release: 1.0.7"
 ```
 
-### 6. Merge to arm64
+### 6. Merge to hardware branch
 
 ```bash
-git checkout arm64
-git merge release/1.1.0
-git push origin arm64
+git checkout hw/1.0
+git merge release/1.0.7
+git push origin hw/1.0
 ```
 
 ### 7. Tag the release
 
 ```bash
-git tag -a v1.1.0 -m "v1.1.0"
-git push origin v1.1.0
+git tag -a v1.0.7 -m "v1.0.7"
+git push origin v1.0.7
 ```
 
 ### 8. Clean up
 
 ```bash
-git branch -d release/1.1.0
-git push origin --delete release/1.1.0
+git branch -d release/1.0.7
+git push origin --delete release/1.0.7
 ```
 
 ## Build verification
