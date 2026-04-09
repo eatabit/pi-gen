@@ -120,6 +120,14 @@ runcmd:
       echo "Warning: Could not read device ID from /proc/cpuinfo"
     fi
 
+  - |
+    # Enable infinite WiFi autoconnect retries for all WiFi profiles
+    # Default is 4 retries then give up — causes devices in poor-signal
+    # locations to permanently disconnect until rebooted
+    for con in $(nmcli -t -f NAME,TYPE con show | awk -F: '$2=="802-11-wireless"{print $1}'); do
+      nmcli con modify "$con" connection.autoconnect yes connection.autoconnect-retries 0
+    done
+
   - npm install -g aws-iot-device-sdk-v2 # AWS IoT SDK
   - npm install -g @ngrok/ngrok # Ngrok package
   - npm install -g @abandonware/bleno # BLE package
