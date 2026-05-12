@@ -7,6 +7,13 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.2] — 2026-05-12
+
+### Fixed
+
+- MQTT client watchdog `process.exit(1)` was unreachable because the preceding `await publishEvent(...)` could hang forever on a wedged AWS IoT SDK connection — a field device observed offline for 18h with ~1000 "Connection watchdog triggered" log lines and no actual exit. The publish is now fire-and-forget with a `setTimeout` backstop.
+- `mqtt-client.service` `StartLimitIntervalSec` and `StartLimitBurst` were in `[Service]` instead of `[Unit]` and were silently ignored by systemd (visible in journalctl as `Unknown key 'StartLimitIntervalSec' in section [Service]`), disabling Layer 3 restart escalation. Moved to `[Unit]`.
+
 ## [1.1.1] — 2026-04-09
 
 ### Fixed
