@@ -36,6 +36,8 @@ After=network-online.target
 Wants=network-online.target
 ConditionPathExists=/usr/local/lib/eatabit/cert/device.pem
 ConditionPathExists=/usr/local/lib/eatabit/cert/device.key
+StartLimitIntervalSec=600
+StartLimitBurst=5
 StartLimitAction=reboot-force
 
 [Service]
@@ -51,8 +53,6 @@ StandardOutput=journal
 StandardError=journal
 WatchdogSec=180
 NotifyAccess=all
-StartLimitIntervalSec=600
-StartLimitBurst=5
 
 # Security hardening
 NoNewPrivileges=true

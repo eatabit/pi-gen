@@ -279,7 +279,7 @@ The periodic `"Watchdog check: disconnected for..."` log lines bridge the gap fo
 
 ### Cloud Event on Watchdog Trigger
 
-Before calling `process.exit(1)`, attempt to publish a `connectionWatchdogTriggered` event:
+Before calling `process.exit(1)`, fire-and-forget a `connectionWatchdogTriggered` event publish. **The publish must NOT be awaited** — when the SDK is in a wedged state the publish promise can hang forever, which previously prevented `process.exit(1)` from being reached and left devices stuck for hours. The watchdog also schedules a backup `setTimeout(() => process.exit(1), 3000).unref()` to guarantee exit even if a future change introduces a synchronous hang above the exit call.
 
 ```json
 {

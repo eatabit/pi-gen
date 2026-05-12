@@ -1690,18 +1690,19 @@ async function main() {
           );
           watchdogTriggerCount++;
 
-          // Best-effort: publish event before exit (may fail if truly disconnected)
-          try {
-            await publishEvent("connectionWatchdogTriggered", {
-              disconnectedForMs: disconnectedMs,
-              lastConnectedAt: lastConnectedAt
-                ? new Date(lastConnectedAt).toISOString()
-                : null,
-              triggeredAt: new Date().toISOString(),
-            });
-          } catch (_) {
-            // Expected to fail if disconnected
-          }
+          // The MQTT publish promise can hang forever when the SDK is wedged —
+          // awaiting it before process.exit() left devices stuck for 18h in the
+          // field. Fire-and-forget, then exit. Belt-and-suspenders setTimeout
+          // guarantees exit if any future code above introduces a sync hang.
+          setTimeout(() => process.exit(1), 3000).unref();
+
+          publishEvent("connectionWatchdogTriggered", {
+            disconnectedForMs: disconnectedMs,
+            lastConnectedAt: lastConnectedAt
+              ? new Date(lastConnectedAt).toISOString()
+              : null,
+            triggeredAt: new Date().toISOString(),
+          }).catch(() => {});
 
           process.exit(1);
         }
