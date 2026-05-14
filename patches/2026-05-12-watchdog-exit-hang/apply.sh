@@ -3,7 +3,7 @@
 # Fixes Layer 1 watchdog process.exit() being unreachable due to an awaited
 # hanging MQTT publish, and moves systemd StartLimit* keys into [Unit].
 #
-# Affected versions: v1.0.4–v1.0.7, v1.1.0–v1.1.1
+# Affected versions: v1.0.2–v1.0.7, v1.1.0–v1.1.1
 # Permanent fix shipped in: v1.0.8, v1.1.2
 #
 # Usage:
@@ -20,7 +20,7 @@ VERSION_FILE="/usr/local/lib/eatabit/version"
 BACKUP_DIR="/usr/local/lib/eatabit/patches/${PATCH_ID}/backup"
 MARKER_FILE="/usr/local/lib/eatabit/patches/${PATCH_ID}/applied"
 
-AFFECTED_VERSIONS=("1.0.4" "1.0.5" "1.0.6" "1.0.7" "1.1.0" "1.1.1")
+AFFECTED_VERSIONS=("1.0.2" "1.0.3" "1.0.4" "1.0.5" "1.0.6" "1.0.7" "1.1.0" "1.1.1")
 
 log()  { printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*"; }
 fail() { printf '[ERROR] %s\n' "$*" >&2; exit 1; }
