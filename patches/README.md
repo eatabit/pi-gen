@@ -14,4 +14,4 @@ The same fix is **also** committed to the image source on the appropriate `hw/*`
 
 | Date | Patch | Affected versions | Severity |
 | --- | --- | --- | --- |
-| 2026-05-12 | [`2026-05-12-watchdog-exit-hang`](./2026-05-12-watchdog-exit-hang/) | v1.0.4–v1.0.7, v1.1.0–v1.1.1 | Critical — devices can be offline indefinitely |
+| 2026-05-12 | [`2026-05-12-watchdog-exit-hang`](./2026-05-12-watchdog-exit-hang/) | v1.0.2–v1.0.7, v1.1.0–v1.1.1 | Critical — devices can be offline indefinitely |

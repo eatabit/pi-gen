@@ -2,9 +2,9 @@
 
 ## Affected versions
 
-Every image from **v1.0.4 onward**, both hardware lines:
+Every image from **v1.0.2 onward**, both hardware lines:
 
-- hw/1.0: `v1.0.4`, `v1.0.5`, `v1.0.6`, `v1.0.7`
+- hw/1.0: `v1.0.2`, `v1.0.3`, `v1.0.4`, `v1.0.5`, `v1.0.6`, `v1.0.7`
 - hw/1.1: `v1.1.0`, `v1.1.1`
 
 The buggy code is byte-identical across all of them, so one patch script handles every version. Devices on v1.0.8+ or v1.1.2+ already have the fix baked into the image — do not apply this patch to those.
