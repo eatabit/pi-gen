@@ -1,0 +1,8 @@
+{
+  "name": "ble-config-tests",
+  "private": true,
+  "description": "Unit tests for the BLE WiFi configuration server (../files/ble-config.js). Test-only — NOT installed onto the image; stage 00-run.sh installs only files/ble-config.js.",
+  "scripts": {
+    "test": "node --test"
+  }
+}
