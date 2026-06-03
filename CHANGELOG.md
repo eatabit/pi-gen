@@ -7,6 +7,12 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.0.9] — 2026-06-03
+
+### Fixed
+
+- BLE WiFi config rejected open (passwordless) networks: `applyWiFiConfig` in `ble-config.js` returned "missing SSID/password" (status `0|0|1`) whenever the password was empty, so it never reached the open-network branch that creates an unsecured nmcli profile. The mobile app offers open networks ("leave blank for open networks"), so configuring one always failed on-device. Now only the SSID is required.
+
 ## [1.0.8] — 2026-05-12
 
 ### Fixed
