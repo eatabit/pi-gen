@@ -1,12 +1,25 @@
 #!/usr/bin/env node
 
-const bleno = require("@abandonware/bleno");
-const { execSync } = require("child_process");
+const cp = require("child_process");
 const fs = require("fs");
 const path = require("path");
 
+// Call execSync through the child_process module object rather than capturing
+// a destructured reference, so unit tests can stub cp.execSync.
+const execSync = (...args) => cp.execSync(...args);
+
+// bleno pulls in a native Bluetooth dependency that is only present on-device.
+// Tolerate its absence so this module can be required by unit tests; the
+// entrypoint (main) is only reached when run directly, where bleno is real.
+let bleno;
+try {
+  bleno = require("@abandonware/bleno");
+} catch (err) {
+  bleno = null;
+}
+
 // Configuration
-const EATABIT_DIR = "/usr/local/lib/eatabit";
+const EATABIT_DIR = process.env.EATABIT_DIR || "/usr/local/lib/eatabit";
 const LOG_FILE = `${EATABIT_DIR}/log/ble-config.log`;
 const MIN_SIGNAL_STRENGTH = 30; // Minimum signal strength for scanned networks
 
@@ -300,8 +313,10 @@ async function scanWiFiNetworks() {
  */
 function applyWiFiConfig() {
   try {
-    if (!currentSSID || !currentPassword) {
-      updateStatus(0, 0, 1); // method 0, fail, detail 1 (missing SSID/password)
+    // Only the SSID is required. An empty password is valid and means an open
+    // (unsecured) network — handled by the open-network branch below.
+    if (!currentSSID) {
+      updateStatus(0, 0, 1); // method 0, fail, detail 1 (missing SSID)
       return false;
     }
 
@@ -1295,7 +1310,21 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  log(`Uncaught error: ${err.message}`, "FATAL");
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((err) => {
+    log(`Uncaught error: ${err.message}`, "FATAL");
+    process.exit(1);
+  });
+}
+
+// Exported for unit tests only. On-device the systemd service runs this file
+// directly, so the require.main === module branch above starts the server.
+module.exports = {
+  applyWiFiConfig,
+  scanWiFiNetworks,
+  __setWifiState: ({ ssid, password }) => {
+    if (ssid !== undefined) currentSSID = ssid;
+    if (password !== undefined) currentPassword = password;
+  },
+  __getConnectionStatus: () => connectionStatus,
+};
