@@ -2,6 +2,13 @@
 
 A multi-layered strategy to ensure the MQTT client stays connected and recovers automatically when it can't.
 
+> **Status:** All three layers are implemented. The design landed in commit `2a02760` ("High
+> availability and docs"); commit `d98760f` later fixed two bugs in it — the Layer 1 watchdog
+> `process.exit` hang (the event publish is now fire-and-forget) and the placement of the
+> `StartLimit*` directives (they must live in `[Unit]`, not `[Service]`, or systemd ignores
+> them). A known issue with Layer 3 (`reboot-force`) on networkless devices, and the planned fix,
+> is documented under [Layer 3 → Known issue: offline reboot loop](#known-issue-offline-reboot-loop).
+
 ## Problem Statement
 
 ### Incident Timeline
@@ -207,14 +214,20 @@ If pings were conditional on `isConnected`, a network outage would trigger Layer
 [Service]
 Restart=always                      # Was: on-failure. Now covers ALL exit scenarios
 RestartSec=10                       # Already set, keep it
-StartLimitIntervalSec=600           # 10-minute sliding window
-StartLimitBurst=5                   # Allow 5 restarts in that window
 ```
 
 ```ini
 [Unit]
+StartLimitIntervalSec=600           # 10-minute sliding window
+StartLimitBurst=5                   # Allow 5 restarts in that window
 StartLimitAction=reboot-force       # If start limit exceeded, force reboot
 ```
+
+> **All three `StartLimit*` directives must be in `[Unit]`, not `[Service]`.** systemd only
+> reads `StartLimitIntervalSec`/`StartLimitBurst` from `[Unit]`; placing them in `[Service]`
+> logs `Unknown key ... in section [Service], ignoring` and silently disables the escalation.
+> This was the bug fixed in commit `d98760f` — devices that should have rebooted instead
+> restart-looped forever. (`RestartSec`/`Restart` correctly stay in `[Service]`.)
 
 ### Behavior
 
@@ -222,7 +235,7 @@ StartLimitAction=reboot-force       # If start limit exceeded, force reboot
 |----------|-------------|
 | Single disconnect > 2.5 min | Layer 1 exits → systemd restarts in 10s → fresh connection |
 | Event loop hang | Layer 2 kills process after ~180s → systemd restarts in 10s |
-| Network down, 5 restarts in 10 min | Start limit exceeded → `reboot-force` → full device reboot |
+| Network down, 5 restarts in 10 min | Start limit exceeded → `reboot-force` → full device reboot (see [known issue](#known-issue-offline-reboot-loop) — this loops uselessly when offline; fix planned) |
 | Clean shutdown (SIGTERM) | `Restart=always` restarts even on exit code 0 — handle with `systemctl stop` which sets a "stop" state that suppresses restart |
 
 ### Why `Restart=always` Instead of `on-failure`
@@ -236,6 +249,30 @@ StartLimitAction=reboot-force       # If start limit exceeded, force reboot
 - This is the nuclear option. If the MQTT client can't stay running for more than 2 minutes at a time (5 restarts in 10 minutes), something is fundamentally broken — corrupted state, hardware issue, kernel module failure, etc.
 - `reboot-force` is equivalent to `reboot -f` — it bypasses `init` and immediately reboots. This ensures recovery even if systemd or the init system is partially hung.
 - An alternative is `FailureAction=reboot` (graceful reboot) if a cleaner shutdown is preferred. Use `reboot-force` for maximum reliability on unattended devices.
+
+### Known issue: offline reboot loop
+
+`reboot-force` assumes a reboot can fix the problem. When the device has **no usable network** —
+WiFi never configured out of the box, or WiFi/internet lost — that assumption breaks:
+
+1. With no network, `connection.connect()` never succeeds, so `mqtt-client` never sends `READY=1`.
+   (The Layer 1 watchdog never even starts in this case — it is created only *after* a successful
+   connect — so the escalation here is driven entirely by repeated **start** failures, not Layer 1.)
+2. For a `Type=notify` unit, a start that never signals `READY=1` is a failed start.
+   `Restart=always` retries every `RestartSec=10`, so ~5 failed starts accumulate inside the 600s
+   window → `StartLimitAction=reboot-force` reboots the device — roughly every 2–4 minutes,
+   indefinitely.
+3. A reboot cannot supply a missing network, so the device just loops: wearing the SD card, going
+   offline for BLE provisioning each cycle, and reprinting the boot "BOOTING / please wait" ticket
+   every time (a client wasted a whole roll overnight on an unconfigured unit).
+
+**Fix (planned):** stop rebooting when there is nothing for a reboot to recover. `mqtt-client`
+sends `READY=1` early (before connect) and treats the initial connect as non-fatal, retrying in the
+background — so an unprovisioned/offline device stays up and waits (flashing-blue LED, BLE-ready)
+instead of failing its start. `reboot-force` is preserved for genuine repeated *pre-readiness*
+crashes, and the Layer 1 watchdog still recovers a post-connect SDK wedge via a lightweight
+restart. See [`docs/bugfix/offline-reboot-loop.md`](../bugfix/offline-reboot-loop.md) for the full
+analysis.
 
 ## Observability Improvements
 
@@ -338,7 +375,7 @@ Publish `connectionWatchdogTriggered` event (best-effort) before `process.exit(1
 Add `connection` object to the health shadow reported state in `publishHealthData()`.
 
 ### 7. `00-run.sh` — Systemd Unit Updates
-Change `Type=simple` → `Type=notify`. Add `WatchdogSec=180`, `NotifyAccess=all`. Change `Restart=on-failure` → `Restart=always`. Add `StartLimitIntervalSec=600`, `StartLimitBurst=5`. Add `StartLimitAction=reboot-force` to `[Unit]`.
+Change `Type=simple` → `Type=notify`. Add `WatchdogSec=180`, `NotifyAccess=all`. Change `Restart=on-failure` → `Restart=always`. Add `StartLimitIntervalSec=600`, `StartLimitBurst=5`, and `StartLimitAction=reboot-force` — **all three in `[Unit]`** (systemd ignores `StartLimit*` placed in `[Service]`).
 
 ### 8. `mqtt-client.js` — Device Ready Flag Persistence
 The `hasDeviceReadyPrinted` flag (which prevents duplicate ready receipts) was an in-memory variable that reset on every process restart. With `Restart=always`, every service restart printed the receipt again. Fix: persist the flag to `/tmp/eatabit-device-ready-printed`. The flag file survives service restarts but is cleared on reboot (`/tmp` is a tmpfs), preserving the "once per power cycle" behavior. `/tmp` is already in `ReadWritePaths`.

@@ -7,6 +7,13 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.4] — 2026-06-30
+
+### Fixed
+
+- Offline reboot loop: a device with no usable network (factory reset / no WiFi config, or lost network) reboot-looped every ~2–4 minutes. `mqtt-client` never signaled systemd `READY` (the connect couldn't succeed), so the `Type=notify` start kept failing until `StartLimitAction=reboot-force`. It now sends `READY=1` before connecting and retries the initial connect in the background instead of exiting, so an offline device stays up and waits (BLE-provisionable) instead of looping. The Layer 1 watchdog and reboot-force for genuine pre-readiness crashes are preserved.
+- Expired jobs stuck `IN_PROGRESS` blocking the queue: an expired job is now terminated with a status legal for its current execution state — `FAILED` when already `IN_PROGRESS` (arrived via `start-next`), `REJECTED` when still `QUEUED` — and a job that expires mid-download now fails cleanly instead of being silently dropped. Previously the device tried to `REJECT` an `IN_PROGRESS` execution (an illegal transition), leaving it stuck and suppressing `notify-next` for every later job.
+
 ## [1.1.3] — 2026-06-03
 
 ### Fixed
