@@ -175,10 +175,24 @@ failure with a silent one.
 
 ## Image source
 
-The same change is committed to image source on **both** hardware lines and ships in
-**v1.0.11** (`hw/1.0`) and **v1.1.5** (`hw/1.1`) — `ISSUE-065`. The files bundled here are
-byte-identical to what those releases ship, so a device flashed to them lands on the fixed
-shas and this patch no-ops.
+The same change is committed to image source on **both** hardware lines and is intended to
+ship in **v1.0.11** (`hw/1.0`) and **v1.1.5** (`hw/1.1`) — `ISSUE-065`.
+
+> **These files are NOT yet byte-identical to the release, and this patch will NOT no-op
+> on a freshly flashed v1.0.11 / v1.1.5 device.** `BUG-044` also edits the unit and
+> `BUG-045` also edits `mqtt-client.js`, so the shas those releases finally ship will
+> differ from the values below. A flashed device therefore hits the **refusal** path and
+> prints its observed sha — safe, but not the intended end state, and it fails
+> `ISSUE-065`'s acceptance criterion that *every 2026-08-19 patch no-ops against a device
+> freshly flashed to v1.0.11 / v1.1.5*.
+>
+> `ISSUE-065` already owns the reconciliation (*"Multiple patches edit the same two files.
+> Their apply order, `ACCEPTED_PRIOR_SHAS` and the final byte-identical state must be
+> reconciled **before** the release, not after."*). It must update `FIXED_JS_SHA` /
+> `FIXED_UNIT_SHA` — or extend `ACCEPTED_PRIOR_SHAS` — once the release shas exist.
+>
+> **Note for `BUG-044` and `BUG-045`:** any device patched for `BUG-039` now sits on the
+> two shas below, so those patches must carry them in their own `ACCEPTED_PRIOR_SHAS`.
 
 | File | Fixed sha256 |
 | --- | --- |
