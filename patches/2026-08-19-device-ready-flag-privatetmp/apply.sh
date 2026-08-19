@@ -33,9 +33,16 @@
 # never overwritten -- and the refusal PRINTS the observed sha256 so an unsampled
 # field device reports its own state instead of merely being rejected.
 #
-# These exact files are also committed to image source on both lines and ship in
-# v1.0.11 (hw/1.0) / v1.1.5 (hw/1.1), byte-identical, so a device flashed to those
-# lands on the FIXED shas and this patch no-ops.
+# These exact files are also committed to image source on both lines and are intended
+# to ship in v1.0.11 (hw/1.0) / v1.1.5 (hw/1.1).
+#
+# NOT YET BYTE-IDENTICAL TO THE RELEASE, and do not assume it. BUG-044 also edits this
+# unit and BUG-045 also edits mqtt-client.js, so the shas those releases finally ship
+# will differ from the FIXED_* values below. Until ISSUE-065 reconciles the patch set
+# against the built image, a device freshly flashed to v1.0.11 / v1.1.5 will NOT no-op
+# here -- it hits the refusal path and prints its observed sha. Safe, but not the
+# intended end state. ISSUE-065 must update FIXED_JS_SHA / FIXED_UNIT_SHA (or extend
+# ACCEPTED_PRIOR_SHAS) once the real release shas exist.
 #
 # NOTE: restarting mqtt-client.service drops the ngrok SSH tunnel (ngrok runs inside
 # that process). Over SSH this script runs the restart+verify DETACHED and logs to
