@@ -45,6 +45,13 @@ Type=notify
 User=root
 WorkingDirectory=/usr/local/lib/eatabit
 ExecStart=/usr/bin/node /usr/local/lib/eatabit/bin/mqtt-client.js
+# /run/eatabit (tmpfs) holds the device-ready guard flag. RuntimeDirectoryPreserve
+# keeps it across a service restart; a reboot or power cycle clears it. That is the
+# once-per-power-cycle semantic the ready receipt needs. The flag must not live in
+# /tmp -- PrivateTmp=true below hands this unit a fresh namespace on every start,
+# which destroys the flag and reprints the receipt (BUG-039).
+RuntimeDirectory=eatabit
+RuntimeDirectoryPreserve=restart
 Restart=always
 RestartSec=10
 TimeoutStopSec=15
