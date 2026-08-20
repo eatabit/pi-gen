@@ -123,12 +123,35 @@ onto those builds would also apply **many unrelated intervening changes** — a 
 change than this patch is scoped to make — and their unit is a different variant. Those
 devices get the fix through the **v1.0.11 / v1.1.5 image release** instead.
 
-**Fleet math** (measured 2026-08-19 for BUG-039, 31 connected devices): this patch applies
-to roughly **7** — 1 × v1.0.10, 6 × v1.1.4. The remaining ~24 are the release's job. Three
-devices report Version `1.1.0`; that build shipped from `5146b0c` and has been annotated
-with a **`v1.1.0` tag as of 2026-08-20**, so their state is known, not a mystery. They are
-outside this patch's accepted set and will be refused by checksum — the correct outcome —
-and the refusal prints their actual sha.
+**Fleet math — measured directly on 2026-08-20 by running `apply.sh --check` on the
+hardware.** Of the 29 devices in the `connected` Thing Group, **23 were surveyed and every
+one is in scope**: 21 `WOULD APPLY`, 2 already patched, **zero refusals**.
+
+| reported version | devices | outcome |
+| --- | --- | --- |
+| 1.0.2 | 4 | all **would apply** |
+| 1.0.6 | 6 | all **would apply** |
+| 1.0.10 | 1 | already patched |
+| 1.1.0 | 3 | all **would apply** |
+| 1.1.1 | 6 | 4 **would apply**, 2 unreachable |
+| 1.1.4 | 5 | 3 **would apply**, 1 already patched, 1 inferred |
+| 1.0.4 | 4 | **not surveyed** — SSH is broken on that build; applicability unknown |
+
+> **The reported version does not predict the outcome — the checksums do.** An earlier
+> estimate here said "roughly 7" devices, inherited from `BUG-039`'s 2026-08-19 fleet math
+> and based on the assumption that only v1.0.10 and v1.1.4 were in scope. **That was wrong,
+> in the safe direction.** The fleet has consolidated onto three `mqtt-client.js` shas —
+> `2f8848db` (16 devices), `e80b7a17` (3) and `51a012ae` (1, the lone survivor on the
+> 2026-06-25 field-patch intermediate) — and a single unit sha `e92b2a15`, *regardless of
+> the version each device reports*. Devices reporting 1.0.2 are running v1.0.10-generation
+> files. All of those shas are in the accepted lists above, which is why nothing refused.
+>
+> `51a012ae` is worth singling out: that device is in scope **only** because the three
+> 2026-06 field-patch intermediates were carried forward. Trimming them as dead weight
+> would have stranded a live production printer.
+
+Full survey, including the two devices that could not be reached:
+`BUG-049`'s `artifacts/bug049-fleet-applicability-survey-2026-08-20.md`.
 
 Both refusal paths print the observed sha256, so an unsampled field device reports its own
 state in one run rather than merely being rejected.
