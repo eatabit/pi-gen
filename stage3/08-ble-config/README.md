@@ -11,9 +11,48 @@ Built on the [`@abandonware/bleno`](https://github.com/nicedoc/bleno) library.
 1. `00-run.sh` installs the script to `/usr/local/lib/eatabit/bin/ble-config.js` during the pi-gen image build.
 2. Three systemd services are created:
    - **`bluetooth.service`** — system Bluetooth daemon
-   - **`bluetooth-poweron.service`** — oneshot that unblocks rfkill, powers on Bluetooth, and enables discoverability at boot
+   - **`bluetooth-poweron.service`** — oneshot that unblocks rfkill and powers on Bluetooth at boot
    - **`ble-config.service`** — the main GATT server, runs as root, restarts on failure every 10s
-3. Bluetooth is configured for always-discoverable, non-pairable LE operation with fast connection intervals (7–9 × 1.25ms).
+3. A fourth surface, easy to miss: `00-run.sh` also writes a managed block into
+   **`/etc/bluetooth/main.conf`**, delimited by `# >>> eatabit BLE configuration …`
+   markers. Bluetooth is configured for always-advertising, non-pairable **LE-only**
+   operation with fast connection intervals (7–9 × 1.25 ms).
+
+### The radio is shared with WiFi (BUG-040)
+
+The CYW43438 puts WiFi and Bluetooth on **one 2.4 GHz front-end and one antenna**,
+time-division multiplexed. Bluetooth radio-on time is WiFi airtime taken away, and it
+was measured to matter a great deal: with Bluetooth on, first-hop jitter to the gateway
+was **22.363 ms**; with it off, **2.668 ms** — an 8.4× difference, with WiFi untouched
+between the two arms (ISSUE-064 finding 10). That jitter is enough to blow the MQTT
+client's ~3 s ping-response window and tear down a healthy connection.
+
+**Everything in the pairing flow is Bluetooth Low Energy.** `ble-config.js` advertises
+through bleno (LE advertising, LE GATT) and the mobile app discovers it with
+`react-native-ble-plx`'s `startDeviceScan`, which is LE-only and matches on the LE
+advertisement's local name. Nothing issues a classic BR/EDR inquiry. So the stage
+configures the controller **LE-only** (`ControllerMode = le`) and no longer runs
+`bluetoothctl discoverable on`, which is what used to leave a provisioned device page-
+and inquiry-scanning (`hciconfig -a` → `UP RUNNING PSCAN ISCAN`) around the clock.
+
+**LE advertising itself is never gated.** It does not depend on WiFi state, on
+NetworkManager, on a dispatcher hook or on a timer. This is deliberate and it is the
+most important property of the design: BLE is the last-resort way into a Pi Zero 2 W —
+there is no Ethernet, SSH rides the WiFi, and the only other recovery is pulling the SD
+card — so making BLE conditional would create a way for a device to become permanently
+unreachable that does not exist today. The device is never less discoverable than
+before. See `iot-doc/tracking/bugs/BUG-040-ble-config-permanent-scan-degrades-wifi/`.
+
+**Four keys removed from the block** — `InitiallyPowered`, `Discoverable`, `Pairable`
+and `[LE] Autoconnect` are **not BlueZ options** (checked against bluez 5.79
+`src/main.conf`; trixie ships 5.79+). They never did anything. `Discoverable = true` in
+particular looked like the reason the device was permanently discoverable; it was not.
+
+> **Editing the block: no backticks, no `$`.** `00-run.sh` feeds these heredocs through
+> `on_chroot << EOF`, which is **unquoted**, so the *build host* expands the body before
+> the chroot sees it — a backtick in a comment runs that command on the build machine
+> and substitutes an empty string into the shipped file. It fails silently. The tests in
+> `tests/` assert against this, and against byte-identity with the field patch payload.
 
 ## Device Identity
 
@@ -170,6 +209,9 @@ All operations log to both stdout/stderr (captured by journald) and `/usr/local/
 | `/usr/local/lib/eatabit/config/volume.json` | Persisted volume setting |
 | `/usr/local/lib/eatabit/log/ble-config.log` | Application log file |
 | `/dev/usb/lp0` | Thermal printer device |
+| `/etc/bluetooth/main.conf` | BlueZ config; carries the eatabit managed block (BUG-040) |
+| `/etc/systemd/system/bluetooth-poweron.service` | rfkill unblock + power on at boot |
+| `/etc/systemd/system/ble-config.service` | The GATT server unit |
 
 ## Mobile App Integration
 

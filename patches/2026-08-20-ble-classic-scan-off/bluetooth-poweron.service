@@ -1,0 +1,19 @@
+[Unit]
+Description=Ensure Bluetooth is powered on at startup
+After=bluetooth.service
+Wants=bluetooth.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c 'sleep 2 && rfkill unblock bluetooth || true'
+ExecStart=/bin/bash -c 'bluetoothctl power on || true'
+# BUG-040: 'bluetoothctl discoverable on' used to be the third ExecStart here. It
+# turned on BR/EDR inquiry scan (the ISCAN flag) and, because DiscoverableTimeout
+# is 0, it never expired -- so a device provisioned a month ago was still inquiry
+# scanning 24/7. Classic discoverability is not used by this product: the mobile
+# app discovers the printer by its LE advertisement, never by a classic inquiry.
+# The line only ever cost airtime on a shared antenna. Do not restore it.
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
