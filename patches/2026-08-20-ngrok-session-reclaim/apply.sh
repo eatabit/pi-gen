@@ -110,7 +110,7 @@ FORCE_INLINE=0
 FORCE_DETACH=0
 
 # --- Desired end state -------------------------------------------------------
-FIXED_JS_SHA="323299afb4d62508be5543d3ecb6c7240f8e05dba7ad566f9eb0644017d026c0"
+FIXED_JS_SHA="1d49a43a401d782bf9d72f69f2c9346c21405a17685185bdbd50f03986d60121"
 FIXED_UNIT_SHA="84aa9272b43699c7d337f8b6e63f2b90d38306335d51bb3475e2e2f4201fc25f"
 
 # --- Files we are willing to replace ----------------------------------------
@@ -121,6 +121,7 @@ FIXED_UNIT_SHA="84aa9272b43699c7d337f8b6e63f2b90d38306335d51bb3475e2e2f4201fc25f
 # than this patch is scoped to make, and their unit is a different variant. Those devices
 # get the fix through the v1.0.11 / v1.1.5 image release instead. See README.md -> Coverage.
 ACCEPTED_PRIOR_JS_SHAS=(
+  "323299afb4d62508be5543d3ecb6c7240f8e05dba7ad566f9eb0644017d026c0" # 2026-08-20 first cut (bounded connect, but stranded its late session)
   "d4647dab55ee858206446c9cc0be5c284ac40554f04a75252cc90abafcbc3376" # output of 2026-08-19-device-ready-flag-privatetmp
   "2f8848db0e8fba8a4ffdc10a517a8b154e181ac0a450d580cae9fca11b459866" # stock v1.0.10 / v1.1.4
   "e80b7a1749672b77e5d67c4e70a418ef30ebb946b9b20580ba4a346402790e20" # stock v1.0.8, v1.0.9, v1.1.2, v1.1.3
