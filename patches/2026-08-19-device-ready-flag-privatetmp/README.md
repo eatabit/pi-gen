@@ -1,5 +1,16 @@
 # 2026-08-19 — device-ready flag destroyed by PrivateTmp (BUG-039)
 
+> ### ⚠️ SUPERSEDED by [`2026-08-20-ngrok-session-reclaim`](../2026-08-20-ngrok-session-reclaim/)
+>
+> **Do not run this patch.** The 2026-08-20 rollup installs this same
+> `mqtt-client.service` byte-for-byte and a strictly newer `mqtt-client.js`, and it
+> accepts every pre-state this patch accepted. Running both costs two `mqtt-client`
+> restarts instead of one, and each restart **drops in-flight print jobs**.
+>
+> Kept for the record: devices already patched by it are a recognised pre-state of the
+> rollup, and its `apply.sh` is still the reference for correct SSH detach handling
+> (BUG-047).
+
 The "device ready" receipt reprints on **every** `mqtt-client.service` restart instead of
 once per power cycle. On a device whose connection is flapping, that means a thermal
 printer printing and beeping through the night in a customer's closed office.

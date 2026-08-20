@@ -5,10 +5,20 @@ over. While it is broken, a patch campaign degrades to *reboot → connect → p
 reboot* per device — and **each reboot drops in-flight print jobs**, so the maintenance
 procedure inflicts the customer-visible harm itself.
 
-> **Apply [`2026-08-19-device-ready-flag-privatetmp`](../2026-08-19-device-ready-flag-privatetmp/)
-> first.** This patch deliberately accepts exactly one prior `mqtt-client.js` — that
-> patch's output — and refuses to run unless the BUG-039-patched unit file is already in
-> place. See *Coverage* below for why.
+> ### Self-contained rollup — it SUPERSEDES [`2026-08-19-device-ready-flag-privatetmp`](../2026-08-19-device-ready-flag-privatetmp/)
+>
+> **Do not run that patch first, and do not run it afterwards.** Everything it installed
+> is installed here: its `mqtt-client.service` is carried byte-for-byte (same sha), and
+> its `mqtt-client.js` is the direct ancestor of this one. A device that already took it
+> is **accepted** and just gets the newer JS; a device that never did gets **both files in
+> one run**.
+>
+> **Why it was merged rather than sequenced.** The first cut of this patch shipped only
+> `mqtt-client.js` and *required* the 2026-08-19 patch as a pre-state, because this JS
+> keeps the device-ready flag in `/run/eatabit` and only the patched unit creates that
+> directory. It worked — but it cost an unpatched device **two runs and therefore two
+> `mqtt-client` restarts**, and every restart **drops in-flight print jobs**. Making the
+> maintenance procedure inflict that harm twice is precisely what BUG-049 exists to stop.
 
 ## The bug
 
@@ -45,10 +55,11 @@ attached**, and an **orphan session alive since 2026-08-17** — no tunnel for t
 **sessions**. A clean credential ledger says nothing about how many stale agent sessions
 a device is holding. That distinction is the whole bug.
 
-## The fix — one file, five defects, one restart
+## The fix — two files, six defects, one restart
 
-All of it lands in `mqtt-client.js`, deliberately bundled so it costs **one**
-`mqtt-client` restart rather than five.
+Five BUG-049/BUG-038 fixes in `mqtt-client.js`, plus BUG-039's two-file fix carried in
+from the superseded patch. Deliberately bundled so the whole set costs **one**
+`mqtt-client` restart.
 
 | | Fix |
 | --- | --- |
@@ -56,6 +67,8 @@ All of it lands in `mqtt-client.js`, deliberately bundled so it costs **one**
 | **F2** | **Bound**, **serialise**, and **reclaim**. The tunnel is now built on a session *we own* via `SessionBuilder`, and stop closes the listener **and** the session. Every ngrok call is bounded and funnelled through a single-writer queue. |
 | **F3** | Fix the check-then-act race on the `ngrokListener` global. Production-confirmed: two live tunnels from pid `124474`, the loser **uncloseable** because the handle had already been overwritten. |
 | **F5** | Publish the **real** `err.message` instead of the hardcoded `"Failed to establish tunnel"`, sanitized to AWS's documented `StatusReason` constraints. |
+
+| **BUG-039** | Carried in unchanged: the device-ready receipt reprints on every service restart, because its guard flag lived in `/tmp` and `PrivateTmp=true` hands the unit a fresh `/tmp` on every start. Fixed by `RuntimeDirectory=eatabit` + `RuntimeDirectoryPreserve=restart` in the unit **and** moving the flag to `/run/eatabit` in the JS. **Both halves are required** — installing the JS without the unit reintroduces that bug silently, which is why the unit is gated here even though most target devices already have it. |
 
 **F4** (pinning `@ngrok/ngrok`) is **not** in this patch — see BUG-049's `planning.md`.
 
@@ -85,30 +98,42 @@ unclosable — reintroducing this very bug on the timeout path.
 
 ## Affected versions / Coverage
 
-**Accepted pre-state — exactly one:**
+Both files are gated **independently** by sha256, so a half-applied device is completed
+rather than refused.
 
-| file | sha256 | meaning |
-| --- | --- | --- |
-| `mqtt-client.js` | `d4647dab…bcbc3376` | output of `2026-08-19-device-ready-flag-privatetmp` |
-| `mqtt-client.service` | `84aa9272…201fc25f` | that patch's unit — **required, never modified here** |
+**Accepted pre-state — `mqtt-client.js`:**
 
-**Result:** `mqtt-client.js` = `323299af…17d026c0`.
+| sha256 | meaning |
+| --- | --- |
+| `d4647dab…` | output of the superseded `2026-08-19` patch |
+| `2f8848db…` | stock v1.0.10 / v1.1.4 |
+| `e80b7a17…` | stock v1.0.8, v1.0.9, v1.1.2, v1.1.3 |
+| `51a012ae…` `b30bc9c2…` `607f3d28…` | the three 2026-06 field-patch intermediates |
 
-**Why so narrow.** This payload carries BUG-039's device-ready flag in `/run/eatabit`,
-which only works when the unit has `RuntimeDirectory=eatabit` — and **this patch does not
-ship a unit file**. Dropping this JS on a device with the stock unit would move the flag
-to a directory systemd never creates, the write would fail, and the ready receipt would
-reprint on every restart: BUG-039 again, in the silent direction. So a device that has
-not taken the 2026-08-19 patch is **refused**, and the refusal says so.
+**Accepted pre-state — `mqtt-client.service`:** `e92b2a15…` (stock unit,
+v1.0.8–v1.0.10 / v1.1.2–v1.1.4). The already-patched unit `84aa9272…` is the target and is
+left alone.
 
-Both gates print the observed sha256, so an unsampled field device reports its own state
-in one run rather than merely being rejected.
+**Result:** `mqtt-client.js` = `323299af…`, `mqtt-client.service` = `84aa9272…`.
+
+**Excluded by design:** v1.0.1, v1.0.2–v1.0.7 and v1.1.1. Dropping this `mqtt-client.js`
+onto those builds would also apply **many unrelated intervening changes** — a far larger
+change than this patch is scoped to make — and their unit is a different variant. Those
+devices get the fix through the **v1.0.11 / v1.1.5 image release** instead.
+
+**Fleet math** (measured 2026-08-19 for BUG-039, 31 connected devices): this patch applies
+to roughly **7** — 1 × v1.0.10, 6 × v1.1.4. The remaining ~24 are the release's job. Three
+devices report Version `1.1.0`, for which no tag exists; they will be refused by checksum,
+which is the correct outcome, and the refusal prints their actual sha.
+
+Both refusal paths print the observed sha256, so an unsampled field device reports its own
+state in one run rather than merely being rejected.
 
 **Not yet byte-identical to the release.** `ISSUE-065` owns v1.0.11 / v1.1.5, and
-`BUG-044` (unit) and `BUG-045` (js) also land in that cut, so the sha the release finally
-ships will differ from `FIXED_JS_SHA`. A device freshly flashed to v1.0.11 / v1.1.5 will
-**not** no-op here — it hits the refusal path and prints its observed sha. Safe, but not
-the intended end state; `ISSUE-065` reconciles it.
+`BUG-044` (unit) and `BUG-045` (js) also land in that cut, so the shas the release finally
+ships will differ from both `FIXED_*` values. A device freshly flashed to v1.0.11 / v1.1.5
+will **not** no-op here — it hits the refusal path and prints its observed sha. Safe, but
+not the intended end state; `ISSUE-065` reconciles it.
 
 ## Validation status
 
@@ -155,15 +180,46 @@ bounded, and carrying the real error rather than the old hardcoded constant.
 
 Full detail: the item's `artifacts/bug049-hardware-validation-2026-08-20.md`.
 
+### Rollup re-validation
+
+The hardware results above were produced by the **first cut** of this patch (JS only). The
+rollup changes only the *installer* and adds `mqtt-client.service`; the `mqtt-client.js`
+payload is byte-identical (`323299af…`), so the device behaviour those results measured is
+unchanged. The installer was re-tested in full:
+
+**26 assertions against a simulated device root, using the genuine stock files** recovered
+from a printer's own `2026-08-19` backup directory (`2f8848db…` js, `e92b2a15…` unit — both
+confirmed against the accepted list, so these are real inputs, not synthetic ones):
+
+| case | asserted |
+| --- | --- |
+| virgin device (stock js + stock unit) | both files installed, both stock originals backed up, **exactly one restart** |
+| device already on the `2026-08-19` patch | accepted, unit recognised as already correct and **not** reinstalled, js updated |
+| already fully patched | idempotent no-op |
+| unrecognised js | refused, observed sha printed, **neither** file modified |
+| unrecognised unit with a good js | refused, **js not partially applied** |
+| rollback from a virgin apply | **both** stock files restored |
+| rollback from a `2026-08-19` device | js reverts to that patch's output, unit **not** downgraded |
+
+**On hardware:** re-run on both LAN printers, which are already at the target state — both
+correctly no-op'd, and `ExecMainStartTimestamp` was **unchanged** on both, confirming no
+restart and so no disturbed print jobs.
+
 ## Usage
 
 ```sh
 scp -r 2026-08-20-ngrok-session-reclaim eatabit@<device>:~/
 ssh eatabit@<device>
 cd 2026-08-20-ngrok-session-reclaim
-sudo ./apply.sh              # apply
-sudo ./apply.sh --rollback   # restore the pre-patch file
+sudo ./apply.sh              # apply — no prerequisite patch
+sudo ./apply.sh --rollback   # restore the pre-patch files
 ```
+
+> On a device that did **not** already have the BUG-039 unit, the restart starts the
+> service into a freshly created `/run/eatabit`, so the ready receipt prints **exactly
+> once**. That is expected and unavoidable — systemd recreates `RuntimeDirectory=` on
+> start and discards anything placed there by hand, so the flag cannot be pre-seeded.
+> Subsequent restarts are silent, which is the point of the BUG-039 half.
 
 Over SSH the restart+verify runs **detached** (`setsid`) and logs to
 `/usr/local/lib/eatabit/patches/2026-08-20-ngrok-session-reclaim/apply.log`, because
