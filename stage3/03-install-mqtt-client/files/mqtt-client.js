@@ -545,7 +545,14 @@ function runNgrokOp(fn) {
 // went on to create would be untracked and unclosable -- reintroducing this very bug on
 // the timeout path. Bounding each step keeps us inside buildNgrokTunnel()'s catch, where
 // whatever was created can still be torn down.
-const NGROK_CONNECT_TIMEOUT_MS = 15000;
+//
+// 25 s for connect, widened from 15 s: healthy connects measure 191 ms to 7.25 s, so
+// this is ~3x the slowest healthy case and it leaves 20 s of the cloud window spare at
+// 25 + 15 = 40 s worst case. **It does NOT rescue v1.1.0's ~811 s stall** (BUG-048), and
+// no value that fits inside a 60 s cloud window could -- a start that slow can never be
+// reported as success. What makes that case safe is reclaimStranded() below, not the
+// bound.
+const NGROK_CONNECT_TIMEOUT_MS = 25000;
 const NGROK_LISTEN_TIMEOUT_MS = 15000;
 const NGROK_CLOSE_TIMEOUT_MS = 4000;
 
@@ -558,16 +565,69 @@ const NGROK_FORWARD_ADDR = "localhost:22";
 // expiry it keeps running in the background -- we stop WAITING for it, we do not stop
 // it. That is the right trade: an unbounded wait is what left a DeviceCommand at `sent`
 // forever, and a command that answers late is worse than one that answers FAILED.
-function withTimeout(promise, ms, label) {
+//
+// `onAbandon`, when given, is called with the promise's eventual value IF the bound
+// expired first. That is what stops an abandoned call from leaking whatever it goes on
+// to create. `expired` is set only by the timer, never by the success path, so a call
+// that finishes in time never triggers it -- do not rewrite this as a flag set after
+// the await, which would race the promise's own continuation and reclaim a resource we
+// are about to use.
+function withTimeout(promise, ms, label, onAbandon) {
   let timer;
+  let expired = false;
   const expiry = new Promise((_resolve, reject) => {
     timer = setTimeout(() => {
+      expired = true;
       const err = new Error(`${label} timed out after ${ms} ms`);
       err.ngrokTimeout = true;
       reject(err);
     }, ms);
   });
+  if (onAbandon) {
+    promise.then(
+      (value) => {
+        if (expired) onAbandon(value);
+      },
+      () => {},
+    );
+  }
   return Promise.race([promise, expiry]).finally(() => clearTimeout(timer));
+}
+
+// Reclaim something a bounded ngrok call produced AFTER we stopped waiting for it.
+//
+// WHY THIS EXISTS, measured rather than theorised. The first cut of this fix bounded
+// connect() and simply walked away on expiry, with a comment calling the leftover
+// session a small "residual leak ... 15 s wide against a call that normally takes ~2 s".
+// On v1.1.0 firmware that call does not take ~2 s: BUG-048 measured it blocking ~811 s,
+// and a patched v1.1.0 device in the field reproduced it exactly -- its credential was
+// minted at 18:07:57Z and the session it created finally appeared at 18:21:28Z, 811 s
+// later, with no listener and nothing holding a reference to it.
+//
+// So the residual was not small: on that firmware EVERY start leaked exactly one
+// session, which is this record's own defect reintroduced on the timeout path. And it
+// is unrecoverable -- @ngrok/ngrok cannot enumerate sessions, deleting the owning
+// credential does NOT terminate the session (verified against the ngrok API), and
+// BUG-035's reaper reclaims credentials only. Nothing but a device restart clears it.
+//
+// Fire-and-forget on purpose: nobody is waiting on this path any more, and the command
+// it belonged to has already published its terminal status.
+function reclaimStranded(what, resource) {
+  if (!resource) return;
+  log(
+    `ngrok ${what} returned AFTER its timeout -- closing the stranded ${what}`,
+    "WARN",
+  );
+  Promise.resolve()
+    .then(() => resource.close())
+    .then(
+      () => log(`stranded ngrok ${what} closed`),
+      (err) =>
+        log(
+          `failed to close stranded ngrok ${what}: ${err.message} -- it may persist until this process restarts`,
+          "ERROR",
+        ),
+    );
 }
 
 // AWS IoT validates StatusReason, and getting it wrong replaces a useless reason with
@@ -672,6 +732,7 @@ async function buildNgrokTunnel(authToken) {
       new ngrok.SessionBuilder().authtoken(authToken).metadata(tag).connect(),
       NGROK_CONNECT_TIMEOUT_MS,
       "ngrok session connect",
+      (late) => reclaimStranded("session", late),
     );
 
     listener = await withTimeout(
@@ -682,6 +743,11 @@ async function buildNgrokTunnel(authToken) {
         .listen(),
       NGROK_LISTEN_TIMEOUT_MS,
       "ngrok tcp listen",
+      // A listener arriving late is a LIVE TUNNEL nothing holds a reference to -- worse
+      // than a stranded session, because it is reachable from the internet. The catch
+      // below closes the session too, which should take its listeners with it; this is
+      // belt and braces for the case where it does not.
+      (late) => reclaimStranded("listener", late),
     );
 
     // Start the forwarding task. Deliberately NOT awaited -- forward() drives the
