@@ -351,6 +351,61 @@ do_rollback() {
 }
 
 # -----------------------------------------------------------------------------
+# Check (dry run)
+# -----------------------------------------------------------------------------
+# Reports exactly what `apply` would do and CHANGES NOTHING. Deliberately does not
+# require root: it only reads. Use it to survey a fleet before a campaign -- a device's
+# VERSION STRING does not determine the outcome, the file checksums do, and a device can
+# carry a version whose files were altered by an earlier field patch.
+#
+# Exit codes:  0 = already patched (no-op)   1 = would refuse   2 = would apply
+do_check() {
+  local v js_sha unit_sha js_state unit_state prior rc
+  v="$(current_version 2>/dev/null || echo unknown)"
+
+  [[ -f $MQTT_CLIENT_JS ]] || fail "$MQTT_CLIENT_JS not found."
+  [[ -f $UNIT_FILE ]]      || fail "$UNIT_FILE not found."
+  js_sha="$(file_sha "$MQTT_CLIENT_JS")"
+  unit_sha="$(file_sha "$UNIT_FILE")"
+
+  js_state=refuse
+  if [[ $js_sha == "$FIXED_JS_SHA" ]]; then
+    js_state=current
+  else
+    for prior in "${ACCEPTED_PRIOR_JS_SHAS[@]}"; do [[ $js_sha == "$prior" ]] && js_state=upgrade; done
+  fi
+
+  unit_state=refuse
+  if [[ $unit_sha == "$FIXED_UNIT_SHA" ]]; then
+    unit_state=current
+  else
+    for prior in "${ACCEPTED_PRIOR_UNIT_SHAS[@]}"; do [[ $unit_sha == "$prior" ]] && unit_state=upgrade; done
+  fi
+
+  printf 'patch          %s\n' "$PATCH_ID"
+  printf 'version        %s\n' "$v"
+  printf 'js    sha256   %s  [%s]\n' "$js_sha" "$js_state"
+  printf 'unit  sha256   %s  [%s]\n' "$unit_sha" "$unit_state"
+
+  if [[ $js_state == refuse || $unit_state == refuse ]]; then
+    printf 'RESULT         WOULD REFUSE -- unrecognized %s; nothing would be modified\n' \
+      "$( [[ $js_state == refuse && $unit_state == refuse ]] && echo 'js and unit' \
+          || { [[ $js_state == refuse ]] && echo js || echo unit; } )"
+    rc=1
+  elif [[ $js_state == current && $unit_state == current ]]; then
+    printf 'RESULT         NO-OP -- already fully patched\n'
+    rc=0
+  else
+    local what=""
+    [[ $js_state == upgrade ]]   && what="js"
+    [[ $unit_state == upgrade ]] && what="${what:+$what and }unit"
+    printf 'RESULT         WOULD APPLY -- installs %s, then ONE mqtt-client restart\n' "$what"
+    rc=2
+  fi
+  return $rc
+}
+
+# -----------------------------------------------------------------------------
 # Apply
 # -----------------------------------------------------------------------------
 do_apply() {
@@ -457,13 +512,18 @@ done
 
 case "${1:-apply}" in
   apply)                do_apply ;;
+  --check|check)        do_check ;;
   --rollback)           do_rollback ;;
   __finalize_apply)     __finalize_apply "${2:?missing version}" ;;
   __finalize_rollback)  __finalize_rollback ;;
   -h|--help)
     cat <<EOF
-Usage: $0 [--inline|--detach] [apply|--rollback]
+Usage: $0 [--inline|--detach] [apply|--check|--rollback]
   apply       (default) apply the patch
+  --check     DRY RUN -- report what apply would do and change nothing. Needs no
+              root. Exit 0 = already patched, 1 = would refuse, 2 = would apply.
+              Use this to survey a fleet: the VERSION STRING does not determine
+              the outcome, the file checksums do.
   --rollback  restore the pre-patch mqtt-client.js and mqtt-client.service from backup
   --inline    force the restart+verify to run inline (local console / testing)
   --detach    force the restart+verify to run detached
