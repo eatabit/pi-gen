@@ -1,9 +1,9 @@
 #!/bin/bash
 # Patch: 2026-08-20-ngrok-session-reclaim   (BUG-049, folding in BUG-038 and BUG-039)
 #
-# SELF-CONTAINED ROLLUP. It SUPERSEDES 2026-08-19-device-ready-flag-privatetmp entirely --
-# do NOT run that patch first, and do not run it afterwards either. Everything it
-# installed is installed here:
+# SELF-CONTAINED ROLLUP. It absorbed and REPLACED 2026-08-19-device-ready-flag-privatetmp,
+# which has since been deleted from patches/ (it survives in git history). There is no
+# prerequisite patch. Everything that one installed is installed here:
 #   * its mqtt-client.service is carried byte-for-byte (same sha, 84aa9272...), and
 #   * its mqtt-client.js is the direct ancestor of the one here (d4647dab... + BUG-049).
 # A device that already took the 2026-08-19 patch is ACCEPTED and simply gets the newer
@@ -468,10 +468,10 @@ Usage: $0 [--inline|--detach] [apply|--rollback]
   --inline    force the restart+verify to run inline (local console / testing)
   --detach    force the restart+verify to run detached
 
-SELF-CONTAINED ROLLUP. It supersedes 2026-08-19-device-ready-flag-privatetmp --
-do not run that patch first or afterwards. Both files are installed here, gated
-independently by sha256, so a device that already took 2026-08-19 is accepted and
-simply gets the newer JS.
+SELF-CONTAINED ROLLUP. There is no prerequisite patch: it replaced
+2026-08-19-device-ready-flag-privatetmp, which has been deleted. Both files are
+installed here, gated independently by sha256, so a device that already took
+that patch is accepted and simply gets the newer JS.
 
 Remote-session detection does NOT rely on \$SSH_CONNECTION alone -- sudo strips it --
 it also walks the parent process chain for sshd.

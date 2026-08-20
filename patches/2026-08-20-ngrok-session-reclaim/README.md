@@ -5,20 +5,22 @@ over. While it is broken, a patch campaign degrades to *reboot → connect → p
 reboot* per device — and **each reboot drops in-flight print jobs**, so the maintenance
 procedure inflicts the customer-visible harm itself.
 
-> ### Self-contained rollup — it SUPERSEDES [`2026-08-19-device-ready-flag-privatetmp`](../2026-08-19-device-ready-flag-privatetmp/)
+> ### Self-contained rollup — no prerequisite patch
 >
-> **Do not run that patch first, and do not run it afterwards.** Everything it installed
-> is installed here: its `mqtt-client.service` is carried byte-for-byte (same sha), and
-> its `mqtt-client.js` is the direct ancestor of this one. A device that already took it
-> is **accepted** and just gets the newer JS; a device that never did gets **both files in
-> one run**.
+> It absorbed and **replaced** `2026-08-19-device-ready-flag-privatetmp` (BUG-039), which
+> has been **deleted** — it installed the same `mqtt-client.service` byte-for-byte and a
+> strictly older `mqtt-client.js`, so it had nothing left to contribute. It remains in git
+> history if you need it. A device that already took it is a **recognised pre-state** here
+> and simply gets the newer JS; a device that never did gets **both files in one run**.
 >
 > **Why it was merged rather than sequenced.** The first cut of this patch shipped only
 > `mqtt-client.js` and *required* the 2026-08-19 patch as a pre-state, because this JS
 > keeps the device-ready flag in `/run/eatabit` and only the patched unit creates that
 > directory. It worked — but it cost an unpatched device **two runs and therefore two
-> `mqtt-client` restarts**, and every restart **drops in-flight print jobs**. Making the
-> maintenance procedure inflict that harm twice is precisely what BUG-049 exists to stop.
+> `mqtt-client` restarts**, and every restart **drops in-flight print jobs**. Measured
+> side by side on a simulated device: `08-19` then rollup = **2 restarts**; rollup alone =
+> **1**, same end state. Making the maintenance procedure inflict that harm twice is
+> precisely what BUG-049 exists to stop.
 
 ## The bug
 
@@ -105,7 +107,7 @@ rather than refused.
 
 | sha256 | meaning |
 | --- | --- |
-| `d4647dab…` | output of the superseded `2026-08-19` patch |
+| `d4647dab…` | output of the deleted `2026-08-19` patch (also the pre-BUG-049 image source) |
 | `2f8848db…` | stock v1.0.10 / v1.1.4 |
 | `e80b7a17…` | stock v1.0.8, v1.0.9, v1.1.2, v1.1.3 |
 | `51a012ae…` `b30bc9c2…` `607f3d28…` | the three 2026-06 field-patch intermediates |
