@@ -112,20 +112,48 @@ the intended end state; `ISSUE-065` reconciles it.
 
 ## Validation status
 
-> **⚠️ NOT YET VALIDATED ON HARDWARE.** The code and the patch script are tested
-> (helper/unit behaviour and the full gate/apply/rollback matrix, both against fakes),
-> but the acceptance criteria that need a live tunnel — repeated start→stop→start within
-> one process lifetime, and zero tunnel-less agent sessions after a stop — have **not**
-> been run on a device yet.
->
-> **Do not ship this over a tunnel until it has been validated on the two LAN printers.**
-> The fix ships over the very mechanism it repairs, so a bad build is unrecoverable
-> remotely. LAN first:
->
-> | Device | IP |
-> | --- | --- |
-> | `00000000cce04a18` | `192.168.1.121` |
-> | `00000000ce4c5d90` | `192.168.1.80` |
+**VALIDATED ON HARDWARE, 2026-08-20 — both LAN printers, 26 assertions, 0 failures.**
+
+| Device | IP | Version | Result |
+| --- | --- | --- | --- |
+| `00000000ce4c5d90` | `192.168.1.80` | **1.0.10** | applied 15:35:26, all checks pass |
+| `00000000cce04a18` | `192.168.1.121` | 1.1.4 | applied 15:36:12, all checks pass |
+
+Three start → stop → start cycles within **one** `mqtt-client` process lifetime on each
+device, after a restart over LAN. Every start succeeded — including the **second and
+third**, which are the assertion, and which failed `500` before this patch:
+
+| | cycle 1 | cycle 2 | cycle 3 |
+| --- | --- | --- | --- |
+| `cce04a18` | 3.54 s | **2.30 s** | **2.78 s** |
+| `ce4c5d90` | 2.40 s | **4.38 s** | **4.72 s** |
+
+Also confirmed on hardware: **zero tunnel-less agent sessions** left by either device's
+cycles; the idle stop reporting `SUCCEEDED` / `NO_TUNNEL_ACTIVE`; one `mqtt-client`
+process with no duplicate tunnel; the success path still carrying the tunnel URL in
+`reasonDescription`; this script's **detach over SSH**, its **idempotent no-op**, and its
+**refusal** paths.
+
+An **induced failure** (ngrok's agent host blackholed via `/etc/hosts`, self-restoring)
+produced, read straight from the `DeviceCommand` row with no device log dive:
+
+```
+failed | 504 | ngrok session connect timed out after 15000 ms
+```
+
+— which is F1, F2 and F5 all demonstrated at once: terminal instead of stuck at `sent`,
+bounded, and carrying the real error rather than the old hardcoded constant.
+
+> **One criterion is NOT covered on hardware, stated rather than quietly counted:** the
+> missing-`authToken` guard. The backend always supplies a token, so it cannot be
+> provoked through the normal command path. It is covered by unit test and inspection.
+
+> **Correction to BUG-049's record:** it states both measured devices run 1.1.4.
+> `ce4c5d90` actually runs **1.0.10** — it is on the **`hw/1.0`** line. That makes the
+> `hw/1.0` landing not optional, and this patch applying cleanly to both is direct
+> evidence the same change is right for both lines.
+
+Full detail: the item's `artifacts/bug049-hardware-validation-2026-08-20.md`.
 
 ## Usage
 
