@@ -16,3 +16,4 @@ The same fix is **also** committed to the image source on the appropriate `hw/*`
 | --- | --- | --- | --- |
 | 2026-05-12 | [`2026-05-12-watchdog-exit-hang`](./2026-05-12-watchdog-exit-hang/) | v1.0.2–v1.0.7, v1.1.0–v1.1.1 | Critical — devices can be offline indefinitely |
 | 2026-06-30 | [`2026-06-30-offline-reboot-and-expired-job`](./2026-06-30-offline-reboot-and-expired-job/) | stock/offline-reboot-patched mqtt-client.js (checksum-gated) | High — offline reboot loop + expired job blocks queue (combined rollup) |
+| 2026-08-19 | [`2026-08-19-device-ready-flag-privatetmp`](./2026-08-19-device-ready-flag-privatetmp/) | all shipped versions are affected; patch accepts stock v1.0.8–v1.0.10 / v1.1.2–v1.1.4 + 2026-06 field-patch intermediates (checksum-gated, js **and** unit) | High — ready receipt reprints on every service restart; printer prints/beeps overnight in a customer's office |
