@@ -125,8 +125,10 @@ devices get the fix through the **v1.0.11 / v1.1.5 image release** instead.
 
 **Fleet math** (measured 2026-08-19 for BUG-039, 31 connected devices): this patch applies
 to roughly **7** — 1 × v1.0.10, 6 × v1.1.4. The remaining ~24 are the release's job. Three
-devices report Version `1.1.0`, for which no tag exists; they will be refused by checksum,
-which is the correct outcome, and the refusal prints their actual sha.
+devices report Version `1.1.0`; that build shipped from `5146b0c` and has been annotated
+with a **`v1.1.0` tag as of 2026-08-20**, so their state is known, not a mystery. They are
+outside this patch's accepted set and will be refused by checksum — the correct outcome —
+and the refusal prints their actual sha.
 
 Both refusal paths print the observed sha256, so an unsampled field device reports its own
 state in one run rather than merely being rejected.
