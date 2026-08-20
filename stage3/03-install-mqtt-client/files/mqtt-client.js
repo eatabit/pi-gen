@@ -471,8 +471,237 @@ log(`Starting Eatabit AWS IoT Client for device: ${DEVICE_ID}`);
 // Global connection reference for publishing
 let mqttConnection;
 
-// Global ngrok listener reference
-let ngrokListener = null;
+// --- ngrok tunnel state and helpers (BUG-049) --------------------------------
+//
+// This block replaces a bare `let ngrokListener = null`. Three defects lived on that
+// one global, and all three are fixed here rather than around the call sites.
+//
+// 1. THE AGENT SESSION OUTLIVED ITS TUNNEL. `ngrok.forward()` creates an implicit,
+//    process-global default session and hands back only a Listener. Closing that
+//    listener leaves the session connected, and @ngrok/ngrok exposes no way to reach
+//    the implicit session it created: `ngrok.disconnect()` and `ngrok.kill()` both
+//    close LISTENERS, not sessions (verified against the installed 1.7.0 index.d.ts,
+//    whose own doc comments read "Close a listener with the given url, or all
+//    listeners if no url is defined" and "Close all listeners"). So every stop leaked
+//    a session; once enough stale sessions accumulated, every later forward() in the
+//    process failed until mqtt-client restarted. Measured on the fleet: both LAN
+//    printers holding sessions with NO tunnels attached, one orphan alive two days.
+//
+//    The fix is to stop using the implicit session at all. We build our OWN session
+//    with SessionBuilder, keep it beside its listener, and close BOTH on stop.
+//
+//    BUG-035's reaper does not help here: it reclaims ngrok CREDENTIALS, not
+//    sessions. A clean credential ledger says nothing about how many stale agent
+//    sessions a device is holding. That distinction is the whole bug.
+//
+// 2. THE HANDLE WAS RACED. `if (ngrokListener)` was tested and then reassigned across
+//    an `await`, in both the start and the stop handler, so two concurrent starts
+//    could each open a tunnel while the loser's handle was overwritten -- leaving a
+//    live tunnel that nothing held a reference to and nothing could close.
+//    Production-confirmed: two live tunnels from pid 124474. Fixed by funnelling
+//    every ngrok operation through runNgrokOp() below, so the handle is single-writer.
+//
+// 3. THE CALLS WERE UNBOUNDED. An ngrok call that never returned left the
+//    DeviceCommand at `sent` forever -- observed 2026-08-20, a stopNgrokTunnel still
+//    `sent` an hour later. Fixed by withTimeout() below, which always publishes a
+//    terminal status.
+
+// The live tunnel, or null. Written ONLY from inside runNgrokOp(), which is what makes
+// it impossible to overwrite a handle that has not been closed.
+let ngrokTunnel = null; // { session, listener, url }
+
+// Serialises every ngrok operation: a start and a stop can no longer interleave. Each
+// operation runs after the previous one settles, whether it resolved or rejected --
+// hence the same callback in both slots of .then(). A rejected op must not poison the
+// chain for every later command.
+let ngrokOpChain = Promise.resolve();
+
+function runNgrokOp(fn) {
+  const result = ngrokOpChain.then(fn, fn);
+  ngrokOpChain = result.then(
+    () => {},
+    () => {},
+  );
+  return result;
+}
+
+// Bounds on the ngrok calls, chosen against the CLOUD-side execution timeout: a
+// device-side bound LONGER than the command's executionTimeoutSeconds publishes into a
+// window that has already closed and buys nothing.
+//
+//   startNgrokTunnel -- executionTimeoutSeconds = 60, set explicitly in iot-backend
+//                       (START_NGROK_TUNNEL_TIMEOUT_SECONDS in
+//                       onDeviceCommandCreated/sendCommand/src/lib/tunnelStartLock.ts).
+//   stopNgrokTunnel  -- deliberately left at AWS's 10 s default.
+//
+// A healthy start completes in ~2 s and a slow bench run took 7.25 s, so 15 s per build
+// step is generous and the two together still leave half the cloud window spare.
+// Teardown is two RPCs bounded at 4 s each, so a worst-case stop answers in 8 s --
+// inside the 10 s stop window, which is the tighter of the two and therefore the one
+// that sets the budget.
+//
+// The build is bounded PER STEP rather than as a whole on purpose. An outer race around
+// the entire build would abandon a build that had already connected, and the session it
+// went on to create would be untracked and unclosable -- reintroducing this very bug on
+// the timeout path. Bounding each step keeps us inside buildNgrokTunnel()'s catch, where
+// whatever was created can still be torn down.
+const NGROK_CONNECT_TIMEOUT_MS = 15000;
+const NGROK_LISTEN_TIMEOUT_MS = 15000;
+const NGROK_CLOSE_TIMEOUT_MS = 4000;
+
+// What the tunnel points at on the device: the local SSH daemon. Plain host:port, not a
+// URL -- Listener.forward() is documented as taking "a TCP address or a file socket
+// path", and the SDK's own TCP example passes a bare address.
+const NGROK_FORWARD_ADDR = "localhost:22";
+
+// Bound a promise. NOTE: the underlying call is native and cannot be cancelled, so on
+// expiry it keeps running in the background -- we stop WAITING for it, we do not stop
+// it. That is the right trade: an unbounded wait is what left a DeviceCommand at `sent`
+// forever, and a command that answers late is worse than one that answers FAILED.
+function withTimeout(promise, ms, label) {
+  let timer;
+  const expiry = new Promise((_resolve, reject) => {
+    timer = setTimeout(() => {
+      const err = new Error(`${label} timed out after ${ms} ms`);
+      err.ngrokTimeout = true;
+      reject(err);
+    }, ms);
+  });
+  return Promise.race([promise, expiry]).finally(() => clearTimeout(timer));
+}
+
+// AWS IoT validates StatusReason, and getting it wrong replaces a useless reason with
+// NO reason -- strictly worse than the hardcoded string this fix removes. Per the AWS
+// IoT API reference (StatusReason, retrieved 2026-08-20):
+//
+//   reasonCode        max 64,   pattern [A-Z0-9_-]+ , REQUIRED
+//   reasonDescription max 1024, pattern [^\p{C}]*   , optional
+//
+// The PATTERN is the trap here, not the length: \p{C} excludes every control
+// character, and a raw err.message routinely contains newlines. So sanitize before
+// publishing, always.
+const NGROK_REASON_MAX = 1000; // under the documented 1024, with margin
+
+function statusReasonText(text, fallback) {
+  const cleaned = String(text === undefined || text === null ? "" : text)
+    .replace(/\p{C}+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!cleaned) return fallback;
+  // Slice by code POINT, not code unit: cutting a surrogate pair in half emits a lone
+  // surrogate and fails validation for a different reason than the one we avoided.
+  return Array.from(cleaned).slice(0, NGROK_REASON_MAX).join("");
+}
+
+// reasonCode values. Every one must match [A-Z0-9_-]+ -- a lowercase code is REJECTED.
+// "200"/"500" are kept exactly as they were so nothing downstream has to change; the
+// symbolic codes are additive.
+const NGROK_REASON = {
+  OK: "200",
+  ERROR: "500",
+  TIMEOUT: "504",
+  NO_TUNNEL_ACTIVE: "NO_TUNNEL_ACTIVE",
+  MISSING_AUTHTOKEN: "MISSING_AUTHTOKEN",
+};
+
+function ngrokFailureCode(err) {
+  return err && err.ngrokTimeout ? NGROK_REASON.TIMEOUT : NGROK_REASON.ERROR;
+}
+
+// Close a tunnel AND RECLAIM ITS SESSION. Both, always -- and the session even when the
+// listener close fails, because an abandoned session is precisely the leak this record
+// exists to stop. Never throws: teardown runs on paths that must still publish a
+// terminal status, so it reports problems instead of replacing them with its own.
+async function teardownNgrokTunnel(tunnel, reason) {
+  const problems = [];
+  if (!tunnel) return problems;
+
+  if (tunnel.listener) {
+    try {
+      await withTimeout(
+        tunnel.listener.close(),
+        NGROK_CLOSE_TIMEOUT_MS,
+        "ngrok listener.close()",
+      );
+    } catch (err) {
+      problems.push(`listener.close(): ${err.message}`);
+    }
+  }
+
+  if (tunnel.session) {
+    try {
+      await withTimeout(
+        tunnel.session.close(),
+        NGROK_CLOSE_TIMEOUT_MS,
+        "ngrok session.close()",
+      );
+    } catch (err) {
+      // A session we could not close is a session the agent may still be holding, and
+      // that is the wedge. Log it loudly -- it is now the one line that tells an
+      // operator the leak recurred.
+      problems.push(`session.close(): ${err.message}`);
+    }
+  }
+
+  if (problems.length) {
+    log(
+      `ngrok teardown (${reason}) INCOMPLETE -- a session may still be held: ${problems.join("; ")}`,
+      "ERROR",
+    );
+  } else {
+    log(`ngrok teardown (${reason}): listener and session both closed`);
+  }
+  return problems;
+}
+
+// Build a tunnel on a session we own, so that stopping it can actually reclaim it.
+//
+// RESIDUAL LEAK, stated rather than hidden: if connect() itself overruns its bound and
+// then succeeds anyway, it produces a session we never received a handle to and cannot
+// close -- @ngrok/ngrok exposes no way to enumerate sessions (only listeners, via
+// ngrok.listeners()). That window is 15 s wide against a call that normally takes ~2 s,
+// and it is strictly smaller than the old behaviour, which leaked a session on EVERY
+// stop. If it ever fires it is now visible: the failure publishes a real timeout reason
+// instead of the old hardcoded string.
+async function buildNgrokTunnel(authToken) {
+  const tag = JSON.stringify({ deviceId: DEVICE_ID, image: IMAGE_VERSION });
+  let session = null;
+  let listener = null;
+  try {
+    session = await withTimeout(
+      new ngrok.SessionBuilder().authtoken(authToken).metadata(tag).connect(),
+      NGROK_CONNECT_TIMEOUT_MS,
+      "ngrok session connect",
+    );
+
+    listener = await withTimeout(
+      session
+        .tcpEndpoint()
+        .metadata(tag)
+        .forwardsTo(NGROK_FORWARD_ADDR)
+        .listen(),
+      NGROK_LISTEN_TIMEOUT_MS,
+      "ngrok tcp listen",
+    );
+
+    // Start the forwarding task. Deliberately NOT awaited -- forward() drives the
+    // forwarding loop, and awaiting it would block until the tunnel closes. This
+    // mirrors the SDK's own TCP example. Errors still surface in the device log.
+    listener.forward(NGROK_FORWARD_ADDR).catch((err) => {
+      log(`ngrok forwarding task ended: ${err.message}`, "ERROR");
+    });
+
+    return { session, listener, url: listener.url() };
+  } catch (err) {
+    // CRITICAL. If connect() succeeded and the listener then failed, we are holding
+    // exactly the tunnel-less session this bug is about. Drop it before rethrowing --
+    // otherwise the error path becomes a second source of the leak.
+    if (session || listener) {
+      await teardownNgrokTunnel({ session, listener }, "failed build");
+    }
+    throw err;
+  }
+}
 
 // Flag to track if device ready receipt has been printed (once per power cycle).
 //
@@ -1415,131 +1644,175 @@ async function main() {
         if (commandId === "startNgrokTunnel") {
           const authToken = data.authToken;
 
+          const publishNgrok = (status, reasonCode, reasonDescription, result) =>
+            connection.publish(
+              `$aws/commands/things/${DEVICE_ID}/executions/${executionId}/response/json`,
+              JSON.stringify({
+                status,
+                statusReason: { reasonCode, reasonDescription },
+                result,
+              }),
+              mqtt.QoS.AtLeastOnce,
+            );
+
           if (!authToken) {
-            log(
-              "startNgrokTunnel command missing authToken parameter",
-              "ERROR",
+            // BUG-049 F1. This used to log and `return`, publishing nothing at all, so
+            // the DeviceCommand sat at `sent` until it aged out with no explanation.
+            // A guard that refuses the work still owes the caller an answer.
+            log("startNgrokTunnel command missing authToken parameter", "ERROR");
+            publishNgrok(
+              JOB_EXECUTION_STATUSES.FAILED,
+              NGROK_REASON.MISSING_AUTHTOKEN,
+              "startNgrokTunnel called without an authToken parameter",
+              { status: { s: "error" } },
             );
             return;
           }
 
           log("Starting ngrok SSH forwarding...");
 
-          try {
-            // Close existing ngrok listener if any
-            if (ngrokListener) {
-              log("Closing existing ngrok connection...");
-              await ngrokListener.close();
-              ngrokListener = null;
+          // Serialised: a concurrent start and stop can no longer interleave, and the
+          // tunnel handle is written only in here.
+          await runNgrokOp(async () => {
+            try {
+              // Replace any existing tunnel, reclaiming its session on the way out.
+              // The old code closed the listener and dropped the reference, which is
+              // what leaked the session and eventually wedged the process.
+              if (ngrokTunnel) {
+                log("Closing existing ngrok tunnel before opening a new one...");
+                const previous = ngrokTunnel;
+                ngrokTunnel = null;
+                await teardownNgrokTunnel(previous, "restart");
+              }
+
+              // Not wrapped in an outer timeout: buildNgrokTunnel() bounds each of
+              // its own steps, so a slow build still lands in its catch and tears
+              // down whatever it managed to create.
+              const tunnel = await buildNgrokTunnel(authToken);
+              ngrokTunnel = tunnel;
+
+              log(`ngrok SSH forwarding established: ${tunnel.url}`, "INFO");
+
+              // ngrokUrl travels in reasonDescription because the events topic
+              // ($aws/events/commandExecution/+/+) includes statusReason but not
+              // result, and only the events topic can trigger IoT Rules. Do not
+              // "tidy" this into result -- the cloud reads it from here.
+              publishNgrok(
+                JOB_EXECUTION_STATUSES.SUCCEEDED,
+                NGROK_REASON.OK,
+                tunnel.url,
+                { ngrokUrl: { s: tunnel.url } },
+              );
+            } catch (err) {
+              // BUG-049 F5. The real error goes to the CLOUD now, not just to a local
+              // log file readable only over the SSH tunnel that has just failed to
+              // open. Every failure in this record's evidence reads `500 / "Failed to
+              // establish tunnel"` -- the hardcoded string that used to live here --
+              // which is why the root cause had to be found from the ngrok API and a
+              // restart experiment instead of from what the device reported.
+              log(
+                `Failed to establish ngrok SSH forwarding: ${err.message}`,
+                "ERROR",
+              );
+
+              // buildNgrokTunnel() tears down anything it created before it
+              // rethrows, so there is normally nothing left here. This covers a
+              // failure that came from replacing an existing tunnel.
+              if (ngrokTunnel) {
+                const stranded = ngrokTunnel;
+                ngrokTunnel = null;
+                await teardownNgrokTunnel(stranded, "failed start");
+              }
+
+              publishNgrok(
+                JOB_EXECUTION_STATUSES.FAILED,
+                ngrokFailureCode(err),
+                statusReasonText(err.message, "Failed to establish tunnel"),
+                { status: { s: "error" } },
+              );
             }
-
-            // Start ngrok forwarding for SSH on port 22
-            ngrokListener = await ngrok.forward({
-              addr: 22,
-              authtoken: authToken,
-              proto: "tcp",
-            });
-
-            const ngrokUrl = ngrokListener.url();
-            log(`ngrok SSH forwarding established: ${ngrokUrl}`, "INFO");
-
-            // Publish SUCCESS event to $aws/commands/things/<DEVICE_ID>/executions/<executionId>/response/json
-            // ngrokUrl is placed in reasonDescription because the events topic
-            // ($aws/events/commandExecution/+/+) includes statusReason but not result.
-            // The result field is only available on the response topic which cannot trigger IoT Rules.
-            const successPayload = JSON.stringify({
-              status: JOB_EXECUTION_STATUSES.SUCCEEDED,
-              statusReason: {
-                reasonCode: "200",
-                reasonDescription: ngrokUrl,
-              },
-              result: {
-                ngrokUrl: { s: ngrokUrl },
-              },
-            });
-
-            connection.publish(
-              `$aws/commands/things/${DEVICE_ID}/executions/${executionId}/response/json`,
-              successPayload,
-              mqtt.QoS.AtLeastOnce,
-            );
-          } catch (err) {
-            log(
-              `Failed to establish ngrok SSH forwarding: ${err.message}`,
-              "ERROR",
-            );
-
-            // Publish FAILED event to $aws/commands/things/<DEVICE_ID>/executions/<executionId>/response/json
-            const failedPayload = JSON.stringify({
-              status: JOB_EXECUTION_STATUSES.FAILED,
-              statusReason: {
-                reasonCode: "500",
-                reasonDescription: "Failed to establish tunnel",
-              },
-              result: {
-                status: { s: "error" },
-              },
-            });
-
-            connection.publish(
-              `$aws/commands/things/${DEVICE_ID}/executions/${executionId}/response/json`,
-              failedPayload,
-              mqtt.QoS.AtLeastOnce,
-            );
-          }
+          });
         }
 
         // Handle stopNgrokTunnel command
         if (commandId === "stopNgrokTunnel") {
           log("Stopping ngrok SSH forwarding...");
 
-          try {
-            if (ngrokListener) {
-              await ngrokListener.close();
-              ngrokListener = null;
-              log("ngrok SSH forwarding stopped", "INFO");
-
-              // Publish SUCCESS event to $aws/commands/things/<DEVICE_ID>/executions/<executionId>/response/json
-              const successPayload = JSON.stringify({
-                status: JOB_EXECUTION_STATUSES.SUCCEEDED,
-                statusReason: {
-                  reasonCode: "200",
-                  reasonDescription: "Tunnel stopped successfully",
-                },
-                result: {
-                  status: { s: "stopped" },
-                },
-              });
-
-              connection.publish(
-                `$aws/commands/things/${DEVICE_ID}/executions/${executionId}/response/json`,
-                successPayload,
-                mqtt.QoS.AtLeastOnce,
-              );
-            } else {
-              log("No active ngrok SSH forwarding to stop", "WARN");
-            }
-          } catch (err) {
-            log(`Failed to stop ngrok SSH forwarding: ${err.message}`, "ERROR");
-
-            // Publish failure event
-            const failedPayload = JSON.stringify({
-              status: JOB_EXECUTION_STATUSES.FAILED,
-              statusReason: {
-                reasonCode: "500",
-                reasonDescription: "Failed to stop tunnel",
-              },
-              result: {
-                status: { s: "error" },
-              },
-            });
-
+          const publishNgrok = (status, reasonCode, reasonDescription, result) =>
             connection.publish(
               `$aws/commands/things/${DEVICE_ID}/executions/${executionId}/response/json`,
-              failedPayload,
+              JSON.stringify({
+                status,
+                statusReason: { reasonCode, reasonDescription },
+                result,
+              }),
               mqtt.QoS.AtLeastOnce,
             );
-          }
+
+          await runNgrokOp(async () => {
+            try {
+              if (!ngrokTunnel) {
+                // BUG-049 F1. This branch used to log and publish NOTHING, so the
+                // DeviceCommand never left `sent`.
+                //
+                // It publishes SUCCEEDED, not FAILED, and that is deliberate --
+                // a later reader will want to "fix" it back, so: "there was nothing
+                // to stop" means THE REQUESTED END STATE ALREADY HOLDS. The caller
+                // asked for no tunnel; there is no tunnel. Reporting FAILED for a
+                // satisfied post-condition is what invites the retry, and a retry
+                // loop against a device that is already in the desired state is
+                // exactly how an operator burns the window in which the device is
+                // reachable. The distinct reasonCode keeps the diagnostic
+                // information ("nothing was there") without lying about the outcome.
+                log("No active ngrok SSH forwarding to stop", "WARN");
+                publishNgrok(
+                  JOB_EXECUTION_STATUSES.SUCCEEDED,
+                  NGROK_REASON.NO_TUNNEL_ACTIVE,
+                  "No active tunnel to stop; device already has no tunnel",
+                  { status: { s: "stopped" } },
+                );
+                return;
+              }
+
+              const tunnel = ngrokTunnel;
+              ngrokTunnel = null;
+              const problems = await teardownNgrokTunnel(tunnel, "stop");
+
+              if (problems.length) {
+                // The listener or the session would not close. Report it rather than
+                // claiming a clean stop: a session we failed to close is the leak
+                // that wedges the next start, and the operator needs to know.
+                publishNgrok(
+                  JOB_EXECUTION_STATUSES.FAILED,
+                  NGROK_REASON.ERROR,
+                  statusReasonText(
+                    `Tunnel teardown incomplete: ${problems.join("; ")}`,
+                    "Failed to stop tunnel",
+                  ),
+                  { status: { s: "error" } },
+                );
+                return;
+              }
+
+              log("ngrok SSH forwarding stopped", "INFO");
+              publishNgrok(
+                JOB_EXECUTION_STATUSES.SUCCEEDED,
+                NGROK_REASON.OK,
+                "Tunnel stopped successfully",
+                { status: { s: "stopped" } },
+              );
+            } catch (err) {
+              // teardownNgrokTunnel() does not throw, so this catches only the
+              // unexpected. Publish the real reason anyway (F5).
+              log(`Failed to stop ngrok SSH forwarding: ${err.message}`, "ERROR");
+              publishNgrok(
+                JOB_EXECUTION_STATUSES.FAILED,
+                ngrokFailureCode(err),
+                statusReasonText(err.message, "Failed to stop tunnel"),
+                { status: { s: "error" } },
+              );
+            }
+          });
         }
 
         /*
