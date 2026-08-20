@@ -69,6 +69,7 @@ from the superseded patch. Deliberately bundled so the whole set costs **one**
 | **F2** | **Bound**, **serialise**, and **reclaim**. The tunnel is now built on a session *we own* via `SessionBuilder`, and stop closes the listener **and** the session. Every ngrok call is bounded and funnelled through a single-writer queue. |
 | **F3** | Fix the check-then-act race on the `ngrokListener` global. Production-confirmed: two live tunnels from pid `124474`, the loser **uncloseable** because the handle had already been overwritten. |
 | **F5** | Publish the **real** `err.message` instead of the hardcoded `"Failed to establish tunnel"`, sanitized to AWS's documented `StatusReason` constraints. |
+| **F2b** | **Reclaim a bounded call that returns late.** Added in the second cut, after the first leaked in the field — see *The late-arrival leak*. |
 
 | **BUG-039** | Carried in unchanged: the device-ready receipt reprints on every service restart, because its guard flag lived in `/tmp` and `PrivateTmp=true` hands the unit a fresh `/tmp` on every start. Fixed by `RuntimeDirectory=eatabit` + `RuntimeDirectoryPreserve=restart` in the unit **and** moving the flag to `/run/eatabit` in the JS. **Both halves are required** — installing the JS without the unit reintroduces that bug silently, which is why the unit is gated here even though most target devices already have it. |
 
@@ -116,7 +117,43 @@ rather than refused.
 v1.0.8–v1.0.10 / v1.1.2–v1.1.4). The already-patched unit `84aa9272…` is the target and is
 left alone.
 
-**Result:** `mqtt-client.js` = `323299af…`, `mqtt-client.service` = `84aa9272…`.
+**Result:** `mqtt-client.js` = `1d49a43a…`, `mqtt-client.service` = `84aa9272…`.
+
+> `323299af…` — this patch's **first cut** — is an accepted pre-state, so a device that took
+> it upgrades in place. It **should** be upgraded; see below.
+
+### The late-arrival leak — why there is a second cut
+
+The first cut bounded `connect()` and simply walked away on expiry. Its own comment called
+the leftover session a small *"residual leak … 15 s wide against a call that normally takes
+~2 s."* **In the field that was wrong.**
+
+A patched v1.1.0 printer in Toronto reproduced it exactly: credential minted `18:07:57Z`,
+timeout published at 15 s, and the session the abandoned call went on to create appeared at
+**`18:21:28Z` — 811 seconds later** — with no listener and nothing holding a reference. On
+that site *every* start leaked one session, and the leak is **unrecoverable**: `@ngrok/ngrok`
+cannot enumerate sessions, deleting the owning credential does **not** terminate the session
+(verified against the ngrok API), and `BUG-035`'s reaper handles credentials only. Nothing
+short of a device restart clears it.
+
+`withTimeout` now takes an `onAbandon` hook, fired **only** by the timer, so a session or
+listener arriving after we stopped waiting is closed rather than orphaned. A late *listener*
+matters more than a late session: it is a live tunnel reachable from the internet.
+
+Proven on hardware by shrinking the bound to 40 ms so a normal connect overruns it:
+
+```
+[INFO]  Starting ngrok SSH forwarding...
+[ERROR] Failed to establish ngrok SSH forwarding: ngrok session connect timed out after 40 ms
+[WARN]  ngrok session returned AFTER its timeout -- closing the stranded session
+[INFO]  stranded ngrok session closed
+```
+
+Account session count: 18 before, 18 after.
+
+The connect bound also widened 15 s → 25 s (~3x the slowest healthy connect; 25 + 15 = 40 s
+worst case, inside the 60 s cloud window). **That does not rescue an 811 s stall**, and no
+in-window value could — `onAbandon` is what makes that case safe, not the bound.
 
 **Excluded by design:** v1.0.1, v1.0.2–v1.0.7 and v1.1.1. Dropping this `mqtt-client.js`
 onto those builds would also apply **many unrelated intervening changes** — a far larger
@@ -125,30 +162,26 @@ devices get the fix through the **v1.0.11 / v1.1.5 image release** instead.
 
 **Fleet math — measured directly on 2026-08-20 by running `apply.sh --check` on the
 hardware.** Of the 29 devices in the `connected` Thing Group, **23 were surveyed and every
-one is in scope**: 21 `WOULD APPLY`, 2 already patched, **zero refusals**.
+one is in scope**: 21 `WOULD APPLY`, 2 already patched, **zero refusals**. The four v1.0.4
+devices were not surveyed (SSH is broken on that build), so their applicability is unknown.
 
-| reported version | devices | outcome |
-| --- | --- | --- |
-| 1.0.2 | 4 | all **would apply** |
-| 1.0.6 | 6 | all **would apply** |
-| 1.0.10 | 1 | already patched |
-| 1.1.0 | 3 | all **would apply** |
-| 1.1.1 | 6 | 4 **would apply**, 2 unreachable |
-| 1.1.4 | 5 | 3 **would apply**, 1 already patched, 1 inferred |
-| 1.0.4 | 4 | **not surveyed** — SSH is broken on that build; applicability unknown |
-
-> **The reported version does not predict the outcome — the checksums do.** An earlier
-> estimate here said "roughly 7" devices, inherited from `BUG-039`'s 2026-08-19 fleet math
-> and based on the assumption that only v1.0.10 and v1.1.4 were in scope. **That was wrong,
-> in the safe direction.** The fleet has consolidated onto three `mqtt-client.js` shas —
-> `2f8848db` (16 devices), `e80b7a17` (3) and `51a012ae` (1, the lone survivor on the
-> 2026-06-25 field-patch intermediate) — and a single unit sha `e92b2a15`, *regardless of
-> the version each device reports*. Devices reporting 1.0.2 are running v1.0.10-generation
-> files. All of those shas are in the accepted lists above, which is why nothing refused.
+> **Why the reported version does not predict the outcome.** `2f8848db` and `e92b2a15` are
+> not only "stock v1.0.10 / v1.1.4" — they are also the **outputs of two earlier field
+> patches**:
 >
-> `51a012ae` is worth singling out: that device is in scope **only** because the three
-> 2026-06 field-patch intermediates were carried forward. Trimming them as dead weight
-> would have stranded a live production printer.
+> | sha | also produced by |
+> | --- | --- |
+> | `e92b2a15…` (unit) | `2026-05-12-watchdog-exit-hang` |
+> | `2f8848db…` (js) | `2026-06-30-offline-reboot-and-expired-job` |
+>
+> So a v1.0.2 or v1.1.0 device carrying those shas is not mislabelled — it has taken those
+> two patches, which move the gated files independently of the version string. Verified on a
+> factory-fresh v1.1.0 unit: pristine it is `177e10b8` / `7999b8b6`, and this patch correctly
+> **refuses** it. After `2026-05-12` (which edits the js **in place** rather than shipping a
+> payload) and `2026-06-30`, it becomes `2f8848db` / `e92b2a15` and is accepted.
+>
+> **Prerequisite chain for anything older than the v1.0.8 generation:** `2026-05-12` →
+> `2026-06-30` → this rollup. The existing fleet already has the first two.
 
 Full survey, including the two devices that could not be reached:
 `BUG-049`'s `artifacts/bug049-fleet-applicability-survey-2026-08-20.md`.
@@ -206,6 +239,34 @@ bounded, and carrying the real error rather than the old hardcoded constant.
 > evidence the same change is right for both lines.
 
 Full detail: the item's `artifacts/bug049-hardware-validation-2026-08-20.md`.
+
+### v1.1.0 validation — the firmware generation the first cut never covered
+
+A factory-fresh **v1.1.0** unit on LAN (`0000000003c45d6d`), brought to the fleet's exact
+state (`2026-05-12` → `2026-06-30` → js `2f8848db`, unit `e92b2a15`), which is precisely
+what the Toronto printer was running before it was patched.
+
+**Before this patch:**
+
+```
+start #1   5s  succeeded  200  tcp://0.tcp.ngrok.io:20867
+stop           succeeded  200  -> account sessions 19 -> 20   (the leak)
+start #2   5s  failed     500  "Failed to establish tunnel"   (the wedge)
+```
+
+**After:**
+
+```
+starts #1-#5   all succeeded, ~5 s each
+stops          all clean
+sessions started during the window, after settling:  ZERO
+```
+
+**5 seconds, not 811.** So v1.1.0 is *not* a slow-connect firmware — an earlier reading of
+`BUG-048` in this record attributed the 811 s stall to the firmware generation, and that was
+wrong. `BUG-048` measured 811 s under *contention*; its own note records a single uncontended
+start at 191 ms. The Toronto device's stall is **site-specific**, and ~811 s is most likely
+the ngrok agent's own retry ceiling, reached whenever early attempts fail for any reason.
 
 ### Rollup re-validation
 
