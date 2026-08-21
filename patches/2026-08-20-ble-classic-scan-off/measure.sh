@@ -49,14 +49,24 @@
 set -uo pipefail
 
 COUNT=60
+ROUNDS=1
 ARMS="asis,classic,fastconn,alloff"
 GW=""
 
 usage() {
   cat <<EOF
-Usage: sudo $0 [-c COUNT] [-a ARMS] [-g GATEWAY] [--list]
+Usage: sudo $0 [-c COUNT] [-r ROUNDS] [-a ARMS] [-g GATEWAY] [--list]
 
-  -c COUNT    packets per arm (default 60; finding 10 used 60)
+  -c COUNT    packets per arm per round (default 60; finding 10 used 60)
+  -r ROUNDS   repeat the whole arm sequence N times, INTERLEAVED (default 1)
+
+              Use -r 3 or more for any result you intend to act on. Arms run
+              sequentially, so a single round attributes ambient 2.4 GHz drift
+              to whichever arm happened to be running -- which on the first
+              real run made "all Bluetooth off" look WORSE than "as-is", a
+              physically impossible ordering. Interleaving rounds gives every
+              arm the same exposure to that drift, and the summary reports
+              spread so you can see whether the effect exceeds it.
   -a ARMS     comma-separated subset of: asis,classic,fastconn,alloff
   -g GATEWAY  target IP (default: the default route's gateway -- the single
               wireless hop, which is the leg we control)
@@ -79,6 +89,7 @@ EOF
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -c) COUNT="$2"; shift 2 ;;
+    -r) ROUNDS="$2"; shift 2 ;;
     -a) ARMS="$2"; shift 2 ;;
     -g) GW="$2"; shift 2 ;;
     --list) usage; exit 0 ;;
@@ -150,13 +161,13 @@ ping_arm() {
   loss="$(grep -oE '[0-9.]+% packet loss' <<<"$out" | head -1)"
   rtt="$(grep -oE '= [0-9.]+/[0-9.]+/[0-9.]+/[0-9.]+ ms' <<<"$out" | head -1 | sed 's/^= //; s/ ms$//')"
   if [[ -z $rtt ]]; then
-    printf '%s|||\n' "$label" >> "$RESULTS"
+    printf '%s|%s|||\n' "$label" "${round:-1}" >> "$RESULTS"
     log "  no rtt line -- raw output follows"; printf '%s\n' "$out"
     return
   fi
   local avg max mdev
   IFS=/ read -r _ avg max mdev <<<"$rtt"   # ping prints min/avg/max/mdev; min is not reported
-  printf '%s|%s|%s|%s|%s\n' "$label" "$avg" "$max" "$mdev" "${loss:-n/a}" >> "$RESULTS"
+  printf '%s|%s|%s|%s|%s|%s\n' "$label" "${round:-1}" "$avg" "$max" "$mdev" "${loss:-n/a}" >> "$RESULTS"
   log "  avg=${avg}ms max=${max}ms mdev=${mdev}ms ${loss:-}"
 }
 
@@ -170,6 +181,8 @@ log "Gateway: $GW   packets/arm: $COUNT   arms: $ARMS"
 log "Starting state: $(hciconfig hci0 2>/dev/null | awk '/UP|DOWN/{$1=$1;print;exit}')"
 echo
 
+for round in $(seq 1 "$ROUNDS"); do
+log "########## ROUND $round of $ROUNDS ##########"
 for arm in ${ARMS//,/ }; do
   case "$arm" in
     asis)
@@ -221,16 +234,40 @@ for arm in ${ARMS//,/ }; do
   esac
   echo
 done
+done
 
 # ---------------------------------------------------------------------------
 echo
-printf '%-26s %10s %10s %10s  %s\n' "ARM" "avg (ms)" "max (ms)" "mdev (ms)" "loss"
-printf '%-26s %10s %10s %10s  %s\n' "--------------------------" "----------" "----------" "----------" "-----"
-while IFS='|' read -r label avg max mdev loss; do
-  printf '%-26s %10s %10s %10s  %s\n' "$label" "${avg:-?}" "${max:-?}" "${mdev:-?}" "${loss:-?}"
-done < "$RESULTS"
-printf '%-26s %10s %10s %10s  %s\n' "ISSUE-064 BT ON  (ref)"  "16.910" "102.122" "22.363" "0%"
-printf '%-26s %10s %10s %10s  %s\n' "ISSUE-064 BT OFF (ref)" "3.223"  "15.019"  "2.668"  "0%"
+if [[ $ROUNDS -gt 1 ]]; then
+  printf 'PER-ROUND DETAIL\n'
+  printf '%-26s %6s %10s %10s %10s  %s\n' "ARM" "round" "avg (ms)" "max (ms)" "mdev (ms)" "loss"
+  printf '%-26s %6s %10s %10s %10s  %s\n' "--------------------------" "------" "----------" "----------" "----------" "-----"
+  while IFS='|' read -r label rnd avg max mdev loss; do
+    printf '%-26s %6s %10s %10s %10s  %s\n' "$label" "$rnd" "${avg:-?}" "${max:-?}" "${mdev:-?}" "${loss:-?}"
+  done < "$RESULTS"
+  echo
+fi
+
+printf 'SUMMARY -- mean across %d round(s), with observed spread\n' "$ROUNDS"
+printf '%-26s %10s %10s %10s %18s\n' "ARM" "avg (ms)" "max (ms)" "mdev (ms)" "mdev min..max"
+printf '%-26s %10s %10s %10s %18s\n' "--------------------------" "----------" "----------" "----------" "------------------"
+awk -F'|' '
+  $3!="" {
+    n[$1]++; a[$1]+=$3; m[$1]+=$4; d[$1]+=$5
+    if (!(($1) in lo) || $5+0 < lo[$1]) lo[$1]=$5+0
+    if (!(($1) in hi) || $5+0 > hi[$1]) hi[$1]=$5+0
+    if (!($1 in seen)) { seen[$1]=1; order[++k]=$1 }
+  }
+  END {
+    for (i=1;i<=k;i++) { s=order[i]
+      printf "%-26s %10.3f %10.3f %10.3f %8.3f..%-8.3f\n", s, a[s]/n[s], m[s]/n[s], d[s]/n[s], lo[s], hi[s]
+    }
+  }' "$RESULTS"
+printf '%-26s %10s %10s %10s\n' "ISSUE-064 BT ON  (ref)"  "16.910" "102.122" "22.363"
+printf '%-26s %10s %10s %10s\n' "ISSUE-064 BT OFF (ref)" "3.223"  "15.019"  "2.668"
+printf '\n  The reference arms were measured on a DIFFERENT network (gateway .1).\n'
+printf '  Use them for the SHAPE of the BT-on/BT-off gap, not as an absolute\n'
+printf '  target this bench must hit.\n'
 
 cat <<'NOTE'
 

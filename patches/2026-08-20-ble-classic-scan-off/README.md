@@ -1,18 +1,25 @@
 # 2026-08-20-ble-classic-scan-off — BUG-040
 
-> ## ⛔ NOT VALIDATED ON HARDWARE. DO NOT SHIP.
+> ## ⚠️ VALIDATED ON THE BENCH. NOT YET CLEARED TO SHIP.
 >
-> Every claim below about the *radio* is derived from source — the kernel's page-scan
-> constants, BlueZ's documented options, bleno's HCI command set, iot-expo's scan API —
-> and **not one of them has been measured on a device.** No arm of `measure.sh` has been
-> run. No phone has paired against a patched device. No AP has been taken away to watch
-> a device come back.
+> Applied and verified on three units — v1.1.4, v1.0.10 and v1.1.0, covering **both**
+> hardware lines. The mechanism works: `PSCAN`/`ISCAN` are gone, BlueZ parses the config
+> with zero warnings, the device is still LE-discoverable by name from another device,
+> the patch no-ops on re-run, and `--rollback` restores byte-exact stock state.
 >
-> **The blocking item is `A2`:** a device that loses WiFi must be shown, on hardware, to
-> still be discoverable and re-provisionable. This patch is *designed* so that A2 cannot
-> regress — it never makes BLE conditional on anything — but "designed so it cannot
-> regress" is an argument, and BUG-040 exists because arguments about this device's radio
-> have been wrong before. See **Validation status** at the bottom for the exact list.
+> **Two things still gate shipping:**
+>
+> 1. **A2 is not yet observed.** Nobody has taken the AP away and watched a patched
+>    device stay discoverable and re-provision. That is the criterion that costs a truck
+>    roll if it is wrong, and no amount of the above substitutes for it.
+> 2. **Pairing has not been exercised from the mobile app.** LE discovery is confirmed
+>    device-to-device, but no phone has completed SSID -> Password -> Apply -> Status,
+>    and nothing has driven the chunked Scan characteristic or factory reset.
+>
+> **And one open decision:** the patch recovers ~69% of the available jitter improvement.
+> The remaining ~31% is LE advertising, which this patch deliberately does not touch.
+> See *Measured results* — whether that residual is worth pursuing is a judgement call,
+> not a follow-up commit.
 
 Stops the device performing BR/EDR ("classic") **page scan** and **inquiry scan**, which
 it did permanently, on a radio front-end it shares with WiFi, while never using classic
@@ -240,37 +247,90 @@ Any failure restores both files, bounces Bluetooth back, and records
 **What it cannot prove:** that a phone completes a pairing. Nothing running on the device
 can prove that. That needs the app, and it is listed below.
 
-## Validation status
+## Measured results
 
-Nothing in the list below has been done. Each needs a physically-accessible lab unit —
-not a customer device, not one reachable only over ngrok — because the thing under test is
-*"can I still get in when the WiFi is gone."*
+Bench: three v20 printers on one LAN, inches apart. `measure.sh` alone was **not
+sufficient** here — it changes the radio on one device, and with two identical units
+beside it still page-scanning at ~14% duty, the "Bluetooth off" arm is not a
+Bluetooth-off environment. Two runs failed that way, one producing the physically
+impossible result that all-Bluetooth-off was *worse* than as-is. The valid method
+switches every unit together and pings from all of them at once.
 
-| # | Required before this ships | Status |
+| Arm | avg (ms) | max (ms) | **mdev (ms)** | n |
+|---|---:|---:|---:|---:|
+| `asis` — as shipped | 9.172 | 50.623 | **11.900** | 9 |
+| `classic` off, LE on — **what this patch does** | 4.248 | 35.141 | **6.475** | 9 |
+| `fastconn` off only | 5.368 | 44.330 | **8.797** | 9 |
+| `alloff` — floor | 3.234 | 23.794 | **4.010** | 9 |
+
+Ordering is monotone and physically coherent: `alloff < classic < fastconn < asis`.
+
+- **Jitter 1.84x better**, average **2.16x better**.
+- The patch recovers **~69%** of the total available improvement.
+- **~31% residual** — roughly 2.5 ms of mdev — is LE advertising, untouched by design.
+
+**These are directional figures, not precise ones.** Per-arm spread is wide and
+individual hosts show local inversions; the bench is a hostile RF environment (an LE
+scan found a Marshall Stanmore II, two CloudPrints, two BT_Printers and a dozen
+anonymous advertisers alongside our units). The as-is -> patch gap is the largest and
+most consistent effect and survives the ordering bias, since `asis` always ran in the
+most favourable slot of each round.
+
+Absolute values are **not** comparable to ISSUE-064 finding 10 (a lone device on a
+different network). Use that record for the shape of the gap, not as a target.
+
+### The `FastConnectable` question, answered
+
+`fastconn` (8.797) sits between `asis` (11.900) and `classic` (6.475), so reverting it
+helps materially on its own but is **not** a substitute for dropping classic scan. Both
+ship. It remains worth having independently because it is the only lever that helps an
+**unprovisioned** device, which is still advertising and scanning by design.
+
+## Verified on hardware
+
+| # | Check | Result |
 |---|---|---|
-| 1 | `measure.sh` on hardware; patched-arm first-hop `mdev` near the 2.668 ms BT-off figure | **not run** |
-| 2 | `classic` vs `alloff` arms compared — how much of the penalty is LE? If LE is material, **stop and raise it** | **not run** |
-| 3 | `FastConnectable` arm measured separately | **not run** |
-| 4 | iot-expo pairing end to end: SSID, Password, Status notify, Apply, chunked Scan | **not run** |
-| 5 | Factory reset over BLE; device returns discoverable | **not run** |
-| 6 | Fresh-flash / post-reset device discoverable immediately at boot, unchanged | **not run** |
-| 7 | **A2 — AP taken away; device still discoverable and re-provisionable, timed** | **not run** |
-| 8 | `apply.sh` no-op, refusal and `--rollback` exercised on a real device | **not run** |
-| 9 | Both hardware lines: 1.0.x original, 1.1.x LED-hat PCB (shared board — do not assume antenna parity) | **not run** |
-| 10 | ≥72 h MQTT flap rate from the cloud `Event` table vs the pre-fix baseline (**not** the device journal — volatile, `BUG-041`) | **not run** |
+| 1 | Bug reproduces: `UP RUNNING PSCAN ISCAN` | ✅ all three units |
+| 2 | Gate recognises every generation — v1.0.10, v1.1.0, v1.1.4 | ✅ identical shas on all three |
+| 3 | `--check` refuses safely on an unrecognised file, changing nothing | ✅ caught the two-block field state before any write |
+| 4 | Apply on **hw/1.1** (v1.1.4) and **hw/1.0** (v1.0.10) | ✅ both, self-check passed |
+| 5 | **A1** — patched device is not inquiry/page scanning | ✅ `UP RUNNING`, `br/edr` absent from `btmgmt` current settings |
+| 6 | `main.conf` consolidates 3 `[General]` → 2, one managed block, zero legacy markers | ✅ |
+| 7 | BlueZ parses the new block with **zero** unknown-key warnings | ✅ (12 warnings before the patch, 0 after) |
+| 8 | **A8** — re-run is a clean no-op, no third `[General]` | ✅ |
+| 9 | `--rollback` restores **byte-exact** stock `main.conf` and unit | ✅ shas match the pre-patch originals exactly |
+| 10 | **Patched device still LE-discoverable by name from another device** | ✅ `Eatabit-4a18` and `Eatabit-5d90` seen in an LE scan from the control unit |
+| 11 | `systemd-analyze verify` on the bundled unit | ✅ |
 
-**What *has* been verified, off-device:**
+## Still required before shipping
 
-- `apply.sh --selftest` — 26 assertions, all passing: legacy→marked rewrite, idempotence
-  over three runs, stock portion preserved byte-for-byte, trailing-override refusal,
-  hand-edited block refused, bundled payload shas match the compiled constants.
-- `stage3/08-ble-config/tests/` — 12 assertions, all passing, including byte-identity
-  between the image source and this patch's payloads. Mutation-tested: reintroducing a
-  backtick, `discoverable on`, or `FastConnectable = true` each fails the suite.
-- `shellcheck -S style` clean on `apply.sh` and `measure.sh`.
-- The image source writes **byte-identical** files to what this patch installs, verified by
-  simulating pi-gen's `on_chroot`, so a device reflashed to v1.0.11 / v1.1.5 **no-ops**
-  this patch instead of hitting its refusal path (`ISSUE-065` reconciliation).
+| # | Required | Status |
+|---|---|---|
+| 1 | **A2 — AP removed; device still discoverable and re-provisionable, timed** | ❌ **not done — the blocking item** |
+| 2 | iot-expo pairing end to end: SSID, Password, Status notify, Apply, chunked Scan | ❌ needs the mobile app |
+| 3 | Factory reset over BLE; device returns discoverable | ❌ needs the mobile app |
+| 4 | Fresh-flash / post-reset device discoverable immediately at boot | ❌ needs a reflash |
+| 5 | ≥72 h MQTT flap rate from the cloud `Event` table vs pre-fix baseline (**not** the device journal — volatile, `BUG-041`) | ❌ needs elapsed time |
+| 6 | Decide whether the ~31% LE residual is worth pursuing | ❌ open question for a human |
+
+## A separate bug found while testing
+
+**`ble-config.service` never exits on SIGTERM.** systemd waits the full
+`TimeoutStopUSec=1min 30s` and then SIGKILLs it — observed exactly, 03:34:56 → 03:36:26.
+The handler is:
+
+```js
+process.on("SIGTERM", async () => {
+  bleno.stopAdvertising(() => { process.exit(0); });   // callback never fires
+});
+```
+
+`bleno.stopAdvertising()`'s callback does not fire, so `process.exit(0)` is never
+reached. This is **pre-existing and unrelated to BUG-040** — it predates this patch and
+is why every `systemctl restart ble-config` takes 90 seconds, and why device shutdowns
+and reboots stall for the same 90 seconds. It does not affect this patch's correctness
+(the self-check passed and advertising returned), only its speed. It wants its own
+record; do not fix it here.
 
 ## Rollout — staged, and no stage proceeds on reasoning alone
 

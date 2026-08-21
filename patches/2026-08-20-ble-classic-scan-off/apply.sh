@@ -158,8 +158,15 @@ FIXED_POWERON_SHA="ee9d76e7d70613478140183e182a4ef6744db863d261c9379150b302ab960
 # --- Files we are willing to replace ----------------------------------------
 # One entry each: 00-run.sh is byte-identical across all 15 released tags, so
 # every fielded device that has not been hand-edited carries exactly these.
+# The FIELD state is TWO eatabit blocks, not one: stage3/08-ble-config/00-run.sh
+# appends one at image-build time and stage2/04-cloud-init appends a second,
+# shorter one on first boot. Verified on real v1.0.10, v1.1.0 and v1.1.4 units --
+# byte-identical on all three, three [General] sections each. The extraction below
+# runs from the FIRST marker to EOF, so it spans both blocks and the rewrite
+# consolidates them into one.
 ACCEPTED_PRIOR_CONF_BLOCK_SHAS=(
-  "a3209a4c006c98600cb937a267485150e45b70469d4dfd0e91343a9fdec93cc6" # stock block, v1.0.1-v1.0.10 / v1.1.0-v1.1.4
+  "792e8b9941f6d41c62c575d185e2defd1a1a714cb614f392f7427137cfa76f27" # FIELD state: stage3 block + cloud-init block (v1.0.10, v1.1.0, v1.1.4 confirmed)
+  "a3209a4c006c98600cb937a267485150e45b70469d4dfd0e91343a9fdec93cc6" # stage3 block alone -- an image whose cloud-init append was already removed
 )
 ACCEPTED_PRIOR_POWERON_SHAS=(
   "183052ae66f8dd54ebe917b652fe62ab888141aed10d1a453fb8fe87bc2adbe0" # stock unit,  v1.0.1-v1.0.10 / v1.1.0-v1.1.4
@@ -262,18 +269,24 @@ install_conf_block() {
     return 1
   fi
 
-  # And the [General] count must not have MOVED. Asserting an absolute number
-  # would be wrong: the stock BlueZ file brings its own [General] and its
-  # contents differ per base image, so the shipped layout is stock's count plus
-  # ours. What matters is that a rewrite never ADDS one -- appending a second
-  # eatabit block is precisely the trap `cat >>` in 00-run.sh sets.
+  # The [General] count must never GO UP. Asserting an absolute number would be
+  # wrong -- the stock BlueZ file brings its own and differs per base image -- and
+  # asserting it is unchanged would be wrong too: a field device carries TWO
+  # eatabit blocks (image build + cloud-init) and this rewrite deliberately
+  # consolidates them into one, so the count legitimately DROPS from 3 to 2. What
+  # must never happen is an increase, which is exactly what the `cat >>` this
+  # patch replaces would do.
   generals="$(grep -c '^\[General\]' "$BT_CONF" || true)"
-  if [[ $generals -ne $before_generals ]]; then
-    log "$BT_CONF went from $before_generals to $generals [General] sections; a rewrite must not change the count."
+  if [[ $generals -gt $before_generals ]]; then
+    log "$BT_CONF went from $before_generals to $generals [General] sections; a rewrite must never add one."
+    return 1
+  fi
+  if [[ $generals -lt 1 ]]; then
+    log "$BT_CONF has no [General] section after the rewrite."
     return 1
   fi
 
-  log "main.conf: exactly one eatabit block, [General] count unchanged at $generals, sha matches."
+  log "main.conf: exactly one eatabit block, [General] sections ${before_generals} -> ${generals}, sha matches."
   return 0
 }
 
@@ -716,19 +729,35 @@ ConnectionSupervisionTimeout = 100
 Autoconnect = true
 LEGACY
 
+  # The SECOND block, appended by stage2/04-cloud-init on first boot. This is the
+  # real field shape -- confirmed byte-identical on v1.0.10, v1.1.0 and v1.1.4
+  # units -- and it is what a repo-only derivation of the "prior" sha misses.
+  cat >> "$root/etc/bluetooth/main.conf" <<'CLOUDINIT'
+
+# Eatabit BLE Configuration
+[General]
+InitiallyPowered = true
+DiscoverableTimeout = 0
+PairableTimeout = 0
+Pairable = false
+CLOUDINIT
+
   printf 'Self-test: main.conf block rewrite\n'
   export EATABIT_PATCH_ROOT="$root"
   _R="$root"; BT_CONF="$root/etc/bluetooth/main.conf"
 
+  check "field shape: 2 eatabit blocks" "$(grep -c '^# Eatabit BLE Configuration' "$BT_CONF")" "2"
+  check "field shape: 3 [General]"      "$(grep -c '^\[General\]' "$BT_CONF")" "3"
   check "legacy form detected"        "$(conf_block_form)" "legacy"
-  check "legacy block sha recognized" "$(string_sha "$(extract_conf_block)")" "${ACCEPTED_PRIOR_CONF_BLOCK_SHAS[0]}"
-  check "legacy file has 2 [General]" "$(grep -c '^\[General\]' "$BT_CONF")" "2"
+  check "field block sha recognized (spans BOTH blocks)" "$(string_sha "$(extract_conf_block)")" "${ACCEPTED_PRIOR_CONF_BLOCK_SHAS[0]}"
 
   # Pass 1: legacy -> marked
   if install_conf_block "$SCRIPT_DIR/main.conf.eatabit" >/dev/null; then ok "pass 1 rewrite"; else bad "pass 1 rewrite"; fi
   check "pass 1 form"          "$(conf_block_form)" "marked"
   check "pass 1 block sha"     "$(string_sha "$(extract_conf_block)")" "$FIXED_CONF_BLOCK_SHA"
-  check "pass 1 [General] count unchanged" "$(grep -c '^\[General\]' "$BT_CONF")" "2"
+  check "pass 1 consolidates 3 [General] -> 2" "$(grep -c '^\[General\]' "$BT_CONF")" "2"
+  check "pass 1 leaves ONE eatabit block"      "$(grep -cF -- "$BEGIN_MARK" "$BT_CONF")" "1"
+  check "pass 1 legacy marker fully gone"      "$(grep -c '^# Eatabit BLE Configuration' "$BT_CONF" || true)" "0"
   check "pass 1 no ISCAN key"  "$(grep -c '^Discoverable = true' "$BT_CONF" || true)" "0"
   check "pass 1 FastConnectable off" "$(grep -c '^FastConnectable = false' "$BT_CONF")" "1"
   check "pass 1 ControllerMode le"   "$(grep -c '^ControllerMode = le' "$BT_CONF")" "1"
