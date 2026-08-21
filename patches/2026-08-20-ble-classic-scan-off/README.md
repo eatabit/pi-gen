@@ -1,5 +1,15 @@
 # 2026-08-20-ble-classic-scan-off — BUG-040
 
+> | | |
+> |---|---|
+> | **Lineage** | `bluetooth` — touches `/etc/bluetooth/main.conf` and `bluetooth-poweron.service` |
+> | **Position** | 1 of 1 — only member of this lineage |
+> | **Prerequisite** | none |
+> | **Independent of** | **every `mqtt-client` patch, including the same-dated [`2026-08-20-ngrok-session-reclaim`](../2026-08-20-ngrok-session-reclaim/).** No shared file, no shared checksum. Either order, or one without the other |
+> | **Restarts** | `bluetooth`, `bluetooth-poweron`, `ble-config` — **never `mqtt-client`**, so the ngrok tunnel and in-flight jobs are untouched |
+>
+> Lineages and why they exist: [`../README.md`](../README.md) → *Lineages*.
+
 > ## ✅ A2 PASSED ON HARDWARE. One unrelated blocker remains.
 >
 > Validated on three units — v1.1.4, v1.0.10 and v1.1.0, covering **both** hardware lines.

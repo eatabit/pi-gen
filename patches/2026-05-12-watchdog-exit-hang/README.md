@@ -1,5 +1,15 @@
 # Watchdog exit hang — patch (2026-05-12)
 
+> | | |
+> |---|---|
+> | **Lineage** | `mqtt-client` — **writes** `mqtt-client.service`; gates on `mqtt-client.js` too, which is what ties it to this lineage |
+> | **Position** | 1 of 3 |
+> | **Prerequisite** | none |
+> | **Superseded by** | [`2026-08-20-ngrok-session-reclaim`](../2026-08-20-ngrok-session-reclaim/), a self-contained rollup that accepts this patch's output as a prior |
+> | **Independent of** | the `bluetooth` lineage — shares no file with it, so order between them does not matter |
+>
+> Lineages and why they exist: [`../README.md`](../README.md) → *Lineages*.
+
 ## Affected versions
 
 Every image from **v1.0.2 onward**, both hardware lines:
