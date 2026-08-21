@@ -1,0 +1,41 @@
+# >>> eatabit BLE configuration -- managed block, do not edit by hand >>>
+# BUG-040. The CYW43438 shares ONE 2.4 GHz front-end and ONE antenna between WiFi
+# and Bluetooth, arbitrated by time-division coexistence. Every millisecond the
+# Bluetooth side spends scanning is a millisecond stolen from WiFi.
+#
+# Provisioning on this product is Bluetooth LOW ENERGY only: ble-config.js
+# advertises a GATT service through @abandonware/bleno (LE advertising, LE GATT),
+# and the mobile app finds it with react-native-ble-plx startDeviceScan, which is
+# LE-only and matches on the LE advertisement's local name. No part of the pairing
+# flow uses a classic BR/EDR inquiry or page scan. Those scans therefore buy this
+# product nothing and cost it airtime continuously.
+[General]
+# Restrict the controller to LE. This is what removes BR/EDR page scan and inquiry
+# scan -- the PSCAN and ISCAN flags in 'hciconfig -a' -- and it does so WITHOUT
+# touching the LE advertising that provisioning actually depends on. The device is
+# never less reachable than it was before this change.
+ControllerMode = le
+
+# Was 'true'. The kernel implements fast connectable as INTERLACED page scan on a
+# 160 ms interval (hci_write_fast_connectable_sync: cp.interval = 0x0100) against
+# the 1.28 s standard default (hci_alloc_dev_priv: def_page_scan_int = 0x0800),
+# with an unchanged 11.25 ms window (def_page_scan_window = 0x0012). That is an 8x
+# nominal -- ~16x once interlacing doubles radio-on time within the window -- rise
+# in page-scan duty cycle, permanently, on a shared antenna. BlueZ's own manual
+# calls the tradeoff "increased power consumption"; on this hardware it is also
+# increased WiFi latency.
+#
+# Moot while ControllerMode = le, and set explicitly so it stays correct if
+# ControllerMode is ever relaxed back to dual.
+FastConnectable = false
+
+DiscoverableTimeout = 0
+PairableTimeout = 0
+Privacy = device
+
+[LE]
+MinConnectionInterval = 7
+MaxConnectionInterval = 9
+ConnectionLatency = 0
+ConnectionSupervisionTimeout = 100
+# <<< eatabit BLE configuration -- managed block, do not edit by hand <<<
