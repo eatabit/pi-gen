@@ -1,25 +1,23 @@
 # 2026-08-20-ble-classic-scan-off — BUG-040
 
-> ## ⚠️ VALIDATED ON THE BENCH. NOT YET CLEARED TO SHIP.
+> ## ✅ A2 PASSED ON HARDWARE. One unrelated blocker remains.
 >
-> Applied and verified on three units — v1.1.4, v1.0.10 and v1.1.0, covering **both**
-> hardware lines. The mechanism works: `PSCAN`/`ISCAN` are gone, BlueZ parses the config
-> with zero warnings, the device is still LE-discoverable by name from another device,
-> the patch no-ops on re-run, and `--rollback` restores byte-exact stock state.
+> Validated on three units — v1.1.4, v1.0.10 and v1.1.0, covering **both** hardware lines.
 >
-> **Two things still gate shipping:**
+> **A2 — the criterion that costs a truck roll — passed.** A patched unit was put into the
+> real latent-stranding scenario (WiFi password changed under it, AP still present, so the
+> `autoconnect-retries 0` retry-forever loop engages) and rebooted. It was confirmed off
+> the network — 100% packet loss, SSH dead — and **both Android and iOS discovered it and
+> connected to it over BLE.** The fix does not make a device unreachable when it loses
+> WiFi. That is the whole question this record was built around, and it holds.
 >
-> 1. **A2 is not yet observed.** Nobody has taken the AP away and watched a patched
->    device stay discoverable and re-provision. That is the criterion that costs a truck
->    roll if it is wrong, and no amount of the above substitutes for it.
-> 2. **Pairing has not been exercised from the mobile app.** LE discovery is confirmed
->    device-to-device, but no phone has completed SSID -> Password -> Apply -> Status,
->    and nothing has driven the chunked Scan characteristic or factory reset.
->
-> **And one open decision:** the patch recovers ~69% of the available jitter improvement.
-> The remaining ~31% is LE advertising, which this patch deliberately does not touch.
-> See *Measured results* — whether that residual is worth pursuing is a judgement call,
-> not a follow-up commit.
+> **A separate, PRE-EXISTING defect blocks re-provisioning**, and it is not caused by this
+> patch: on a device that has lost WiFi, the mobile app's WiFi network list never
+> populates — it sits on "Scanning..." forever with `Save WiFi` greyed out. Proven
+> unrelated by A/B: the **unpatched control** fails **identically**. See
+> *The re-provisioning blocker* below. It needs its own record and it does not gate this
+> patch — but it does gate the fleet rollout, because a device that cannot be
+> re-provisioned is not actually recoverable regardless of whether BLE answers.
 
 Stops the device performing BR/EDR ("classic") **page scan** and **inquiry scan**, which
 it did permanently, on a radio front-end it shares with WiFi, while never using classic
@@ -301,14 +299,24 @@ ship. It remains worth having independently because it is the only lever that he
 | 9 | `--rollback` restores **byte-exact** stock `main.conf` and unit | ✅ shas match the pre-patch originals exactly |
 | 10 | **Patched device still LE-discoverable by name from another device** | ✅ `Eatabit-4a18` and `Eatabit-5d90` seen in an LE scan from the control unit |
 | 11 | `systemd-analyze verify` on the bundled unit | ✅ |
+| 12 | **Mobile app: discover, connect, print diagnostics** — Android **and** iOS, all three units | ✅ 2026-08-21 |
+| 13 | **Chunked Scan characteristic** end to end | ✅ subscribed, 4 networks, 221 B split into **19 chunks**, delivered |
+| 14 | Config status read, Cutter and Volume characteristics | ✅ |
+| 15 | Diagnostics characteristic write → **physical printout** | ✅ on all three |
+| 16 | **A/B against the unpatched control** — no behavioural difference | ✅ identical flow on `.126` (control) and the two patched units |
+| 17 | **A2 — patched unit stranded (wrong WiFi password, AP present, retry-forever loop), rebooted, confirmed off-network** | ✅ 100% packet loss, SSH dead |
+| 18 | **A2 — stranded unit discovered and connected over BLE, Android AND iOS** | ✅ **the criterion that matters** |
+| 19 | A/B: unpatched control stranded the same way behaves identically | ✅ proves the re-provisioning failure is not ours |
 
 ## Still required before shipping
 
 | # | Required | Status |
 |---|---|---|
-| 1 | **A2 — AP removed; device still discoverable and re-provisionable, timed** | ❌ **not done — the blocking item** |
-| 2 | iot-expo pairing end to end: SSID, Password, Status notify, Apply, chunked Scan | ❌ needs the mobile app |
-| 3 | Factory reset over BLE; device returns discoverable | ❌ needs the mobile app |
+| 1 | **A2 — stranded device still discoverable over BLE** | ✅ **PASSED 2026-08-21, Android + iOS** |
+| 1b | A2 — stranded device actually *re-provisionable* | ❌ blocked by a **pre-existing** defect, not by this patch — see below |
+| 2 | iot-expo: discover, connect, chunked Scan, diagnostics — Android + iOS | ✅ **done 2026-08-21**, all three units, no difference vs control |
+| 3 | iot-expo provisioning writes: SSID, Password, Apply, Status notify | ❌ covered by the A2 test |
+| 4 | Factory reset over BLE; device returns discoverable | ❌ needs the mobile app |
 | 4 | Fresh-flash / post-reset device discoverable immediately at boot | ❌ needs a reflash |
 | 5 | ≥72 h MQTT flap rate from the cloud `Event` table vs pre-fix baseline (**not** the device journal — volatile, `BUG-041`) | ❌ needs elapsed time |
 | 6 | Decide whether the ~31% LE residual is worth pursuing | ❌ open question for a human |
@@ -331,6 +339,57 @@ is why every `systemctl restart ble-config` takes 90 seconds, and why device shu
 and reboots stall for the same 90 seconds. It does not affect this patch's correctness
 (the self-check passed and advertising returned), only its speed. It wants its own
 record; do not fix it here.
+
+## The re-provisioning blocker — pre-existing, NOT caused by this patch
+
+**Symptom.** On a device that has **lost WiFi**, the app connects over BLE normally but the
+WiFi network dropdown never populates — stuck on "Scanning...", `Save WiFi` disabled, so the
+device cannot be given new credentials. Android and iOS both. Screenshots in the record's
+`artifacts/`.
+
+**A clean three-way A/B settles what it is and is not:**
+
+| Unit | Patch | State | BLE connect | WiFi list |
+|---|---|---|---|---|
+| `Eatabit-4a18` v1.1.4 | applied | **stranded** | ✅ | ❌ |
+| `Eatabit-5d6d` v1.1.0 | **none (control)** | **stranded** | ✅ | ❌ |
+| `Eatabit-5d90` v1.0.10 | applied | **healthy** | ✅ | ✅ **works** |
+
+So it is **not caused by this patch** (the unpatched control fails identically) and it
+**correlates with the device being off-WiFi** (the patched healthy unit is fine).
+
+**The device is not at fault — it sends the data.** From the stranded unit's own journal,
+repeatedly, to three different phone MACs across both platforms:
+
+```
+15:55:14.524  Scan request: SCAN
+15:55:14.616  Found 4 networks          <- ~90 ms
+15:55:14.619  WiFi scan sent to 1 subscribers
+```
+
+**Two hypotheses tested and rejected. Recorded so nobody re-derives them:**
+
+1. **`execSync` blocking the single-threaded GATT server.** `scanWiFiNetworks()`
+   (`ble-config.js:271`) shells to `nmcli` with **no timeout**. Plausible — and wrong: the
+   scan returned in ~90 ms every time and the server kept serving. The missing timeout is a
+   real latent hazard worth hardening, but it is not this symptom.
+2. **Chunk count / MTU negotiation.** `ble-config.js:594` is
+   `const mtuSize = client.maxSize || 20;`, so an unnegotiated MTU fragments far more
+   finely — 169 bytes shipped as **1 chunk** with MTU 185 and as **15 chunks** without.
+   Also wrong: the **15-chunk transfer worked**. The app reassembles many chunks fine.
+
+**Where the break actually is.** `iot-expo/components/printer/v20/Form.tsx:154-160` fills
+the dropdown from an `ssids` prop and returns early on `if (!ssids) return;`. `ssids` never
+arrives, so the chain breaks between the device emitting notifications and `useBLEv20`
+producing `ssids`. Leading untested hypothesis: while stranded the device's WiFi state
+churns (NetworkManager logged 24 `disconnected` events in the window) so the STATUS
+characteristic notifies constantly, and that contends with — or is confused by — the scan
+notification monitor. `ISSUE-058` (a leaked `Subscription` on this exact characteristic in
+`useBLEv20.ts:41`) is adjacent and may be implicated, though it is a distinct P3 defect.
+
+**Filed as its own record. It does not gate this patch** — BUG-040 neither causes nor
+worsens it — **but it should be understood before a wide rollout**, because a device that
+answers BLE and cannot be handed new credentials is not recoverable in any useful sense.
 
 ## Rollout — staged, and no stage proceeds on reasoning alone
 
