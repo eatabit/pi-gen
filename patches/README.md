@@ -10,6 +10,52 @@ A patch lands here when:
 
 The same fix is **also** committed to the image source on the appropriate `hw/*` branch and shipped in a normal versioned release. The patch is a stopgap; the image is the source of truth.
 
+## Lineages — what must follow what
+
+**A patch's date does not tell you its order, and two patches sharing a date does not
+mean one follows the other.** What creates an ordering is a **shared target file**: each
+`apply.sh` gates on the sha256 of the files it replaces, so patches touching the same file
+form a chain, and patches touching disjoint files are independent. Read this table before
+planning a campaign; the directory listing on its own will mislead you.
+
+| Lineage | Target files | Patches, in order |
+|---|---|---|
+| **`mqtt-client`** | `/usr/local/lib/eatabit/bin/mqtt-client.js`, `/etc/systemd/system/mqtt-client.service` | 1. [`2026-05-12-watchdog-exit-hang`](./2026-05-12-watchdog-exit-hang/)<br>2. [`2026-06-30-offline-reboot-and-expired-job`](./2026-06-30-offline-reboot-and-expired-job/)<br>3. [`2026-08-20-ngrok-session-reclaim`](./2026-08-20-ngrok-session-reclaim/) — **self-contained** |
+| **`bluetooth`** | `/etc/bluetooth/main.conf`, `/etc/systemd/system/bluetooth-poweron.service` | 1. [`2026-08-20-ble-classic-scan-off`](./2026-08-20-ble-classic-scan-off/) — **independent** |
+
+**The two `2026-08-20` patches share no file and therefore no checksum.** They may be
+applied in either order, or one without the other. The shared date is a coincidence of
+authorship, not a sequence.
+
+**Within `mqtt-client`, the current head is self-contained.** `2026-08-20-ngrok-session-reclaim`
+accepts stock v1.0.8–v1.0.10 / v1.1.2–v1.1.4 *and* the output of every earlier patch in the
+lineage, so it can be applied directly to any of them. The numbering above is provenance —
+how the code got here — not a sequence you must replay.
+
+### How to tell for yourself, without trusting this table
+
+The checksums are the authority, and every patch has a dry run that needs no root and
+changes nothing:
+
+```bash
+./apply.sh --check     # 0 = already patched   1 = would refuse   2 = would apply
+```
+
+Run it for each patch on a sample device. **A device's version string does not determine
+the outcome — its file checksums do**, and a device can carry a version whose files an
+earlier field patch already altered. If two patches both report `would apply`, they are
+independent by construction: each is gating on files the other does not touch.
+
+### Adding a patch
+
+State its lineage in its `README.md` header block — the table at the top of every patch
+here — and add it to the table above. If it targets a file no existing lineage covers, it
+starts a new lineage and is independent of all of them. **Do not encode ordering in the
+directory name**: the directory name becomes `PATCH_ID`, which is the on-device state path
+`/usr/local/lib/eatabit/patches/<PATCH_ID>/` holding that device's `backup/` and `applied`
+marker. Renaming a patch that has ever been applied in the field orphans those, and
+`--rollback` then cannot find the backup it needs.
+
 ## Patches
 
 | Date | Patch | Affected versions | Severity |
