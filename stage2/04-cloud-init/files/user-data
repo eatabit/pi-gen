@@ -97,17 +97,20 @@ packages:
 
 ## Run arbitrary commands at rc.local like time
 runcmd:
-  - |
-    # Configure Bluetooth for BLE peripheral mode
-    cat >> /etc/bluetooth/main.conf << 'BT_EOF'
-
-    # Eatabit BLE Configuration
-    [General]
-    InitiallyPowered = true
-    DiscoverableTimeout = 0
-    PairableTimeout = 0
-    Pairable = false
-    BT_EOF
+  # BUG-040: a `cat >> /etc/bluetooth/main.conf` used to live here, appending a
+  # SECOND "# Eatabit BLE Configuration" [General] section on first boot -- on top
+  # of the one stage3/08-ble-config/00-run.sh already wrote at image-build time.
+  # Every fielded device therefore carries TWO eatabit blocks and THREE [General]
+  # sections; verified on v1.0.10, v1.1.0 and v1.1.4 units, byte-identical on all.
+  #
+  # It contributed nothing. Of its four keys, DiscoverableTimeout and PairableTimeout
+  # were already set to the same values by the stage3 block, and InitiallyPowered and
+  # Pairable are NOT BlueZ options at all -- bluetoothd logs "Unknown key
+  # InitiallyPowered for group General" and the same for Pairable on every boot.
+  #
+  # Removed so a freshly flashed device ends up with exactly ONE managed block and
+  # lands on the field patch's FIXED_CONF_BLOCK_SHA, which is what makes the patch
+  # no-op on a reflashed device instead of hitting its refusal path.
 
   - |
     # Store device ID from CPU serial
