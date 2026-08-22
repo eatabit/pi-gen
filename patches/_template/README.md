@@ -1,8 +1,15 @@
 # `_template` — starting point for a new field patch. **Not a patch.**
 
-> **Do not `scp` this directory to a device.** It is a skeleton with empty gates; it
-> would refuse to do anything useful and only confuse whoever ran it. It is
-> deliberately not listed in the *Patches* table in [`../README.md`](../README.md).
+> **Do not `scp` this directory to a device.** It is deliberately not listed in the
+> *Patches* table in [`../README.md`](../README.md).
+>
+> It is also **non-appliable by construction, not just by convention**: while `PATCH_ID`
+> is still the placeholder, `apply`, `--rollback`, `--check` and both `__finalize_*`
+> re-exec targets refuse. Without that guard an unedited template would sail past the
+> unwritten `TODO`s straight into `__finalize_apply`, which **restarts
+> `mqtt-client.service` on a live device** — no gates checked, nothing installed, service
+> bounced for nothing. Setting `PATCH_ID` to your new directory name disarms it, which is
+> step one of using the template anyway.
 
 ## Use
 
