@@ -10,6 +10,16 @@
 >
 > Lineages and why they exist: [`../README.md`](../README.md) → *Lineages*.
 
+> **Revised 2026-08-22 — BUG-047.** **SSH detection corrected.** The detach guard tested `$SSH_CONNECTION` only, which `sudo`'s
+> `env_reset` strips — so under the documented `sudo ./apply.sh` it concluded "local console"
+> and ran the restart inline, the exact failure the detach exists to prevent. It now uses
+> `is_remote_session()` (parent-chain walk) and accepts `--inline` / `--detach`.
+> 
+> **Installed files and checksums are unchanged.** This edit touches only the
+> foreground/background decision — every payload, `FIXED_*` / `ACCEPTED_PRIOR_*` checksum,
+> version gate, marker and backup path is byte-identical to the version originally shipped,
+> so an on-device copy predating this note installs exactly the same bytes.
+
 Combined `mqtt-client.js` rollup of two fixes. **Supersedes the earlier
 `2026-06-25-offline-reboot-loop` patch** (now removed) — this is the offline-reboot fix plus the
 expired-job/stuck-`IN_PROGRESS` fix, and it accepts that patch's file (`51a012ae…`) as an
