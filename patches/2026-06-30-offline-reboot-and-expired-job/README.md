@@ -1,5 +1,15 @@
 # Offline reboot loop + expired-job stuck IN_PROGRESS — combined patch (2026-06-30)
 
+> | | |
+> |---|---|
+> | **Lineage** | `mqtt-client` — touches `mqtt-client.js` |
+> | **Position** | 2 of 3 |
+> | **Prerequisite** | none — checksum-gated, accepts stock or the 2026-06-25 patch's output |
+> | **Superseded by** | [`2026-08-20-ngrok-session-reclaim`](../2026-08-20-ngrok-session-reclaim/), which accepts this patch's output (`607f3d28…`) as a prior |
+> | **Independent of** | the `bluetooth` lineage — shares no file with it, so order between them does not matter |
+>
+> Lineages and why they exist: [`../README.md`](../README.md) → *Lineages*.
+
 Combined `mqtt-client.js` rollup of two fixes. **Supersedes the earlier
 `2026-06-25-offline-reboot-loop` patch** (now removed) — this is the offline-reboot fix plus the
 expired-job/stuck-`IN_PROGRESS` fix, and it accepts that patch's file (`51a012ae…`) as an

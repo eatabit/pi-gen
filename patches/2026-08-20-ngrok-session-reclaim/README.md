@@ -1,5 +1,15 @@
 # 2026-08-20 — ngrok agent session reclaim (BUG-049)
 
+> | | |
+> |---|---|
+> | **Lineage** | `mqtt-client` — touches `mqtt-client.js` **and** `mqtt-client.service` |
+> | **Position** | 3 of 3 — current head of this lineage |
+> | **Prerequisite** | **none. Self-contained rollup.** It accepts stock v1.0.8–v1.0.10 / v1.1.2–v1.1.4 and the outputs of every earlier patch in this lineage, so it can be applied directly to any of them |
+> | **Independent of** | [`2026-08-20-ble-classic-scan-off`](../2026-08-20-ble-classic-scan-off/) — **same date, no shared file, no shared checksum.** Either order, or one without the other |
+> | **Restarts** | `mqtt-client.service` — **drops the ngrok SSH tunnel and any in-flight print job** |
+>
+> Lineages and why they exist: [`../README.md`](../README.md) → *Lineages*.
+
 **Severity: High.** This is the remote-access path every other field patch is delivered
 over. While it is broken, a patch campaign degrades to *reboot → connect → patch →
 reboot* per device — and **each reboot drops in-flight print jobs**, so the maintenance
