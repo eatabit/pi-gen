@@ -10,6 +10,16 @@
 >
 > Lineages and why they exist: [`../README.md`](../README.md) → *Lineages*.
 
+> **Revised 2026-08-22 — BUG-047.** **SSH detection added.** This patch previously restarted `mqtt-client.service` **inline on
+> both the apply and rollback paths**, with no remote-session detection at all, so applying or
+> rolling it back over an SSH/ngrok session was killed by the restart it had just caused. It now
+> re-execs the restart+verify detached over SSH, and accepts `--inline` / `--detach`.
+> 
+> **Installed files and checksums are unchanged.** This edit touches only the
+> foreground/background decision — every payload, `FIXED_*` / `ACCEPTED_PRIOR_*` checksum,
+> version gate, marker and backup path is byte-identical to the version originally shipped,
+> so an on-device copy predating this note installs exactly the same bytes.
+
 ## Affected versions
 
 Every image from **v1.0.2 onward**, both hardware lines:

@@ -10,6 +10,15 @@
 >
 > Lineages and why they exist: [`../README.md`](../README.md) → *Lineages*.
 
+> **Revised 2026-08-22 — BUG-047.** **SSH detection hardened.** `is_remote_session()` matched `sshd` exactly, which does not match
+> the `sshd-session` processes OpenSSH 9.8+ creates — it matched only by climbing to the listener,
+> and would match nothing under `ssh.socket` activation. Now matches `sshd*`.
+> 
+> **Installed files and checksums are unchanged.** This edit touches only the
+> foreground/background decision — every payload, `FIXED_*` / `ACCEPTED_PRIOR_*` checksum,
+> version gate, marker and backup path is byte-identical to the version originally shipped,
+> so an on-device copy predating this note installs exactly the same bytes.
+
 **Severity: High.** This is the remote-access path every other field patch is delivered
 over. While it is broken, a patch campaign degrades to *reboot → connect → patch →
 reboot* per device — and **each reboot drops in-flight print jobs**, so the maintenance

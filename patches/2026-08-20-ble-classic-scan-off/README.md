@@ -10,6 +10,15 @@
 >
 > Lineages and why they exist: [`../README.md`](../README.md) → *Lineages*.
 
+> **Revised 2026-08-22 — BUG-047.** **SSH detection hardened.** Same one-character correction as the rollup this file's
+> `is_remote_session()` was hand-copied from: `sshd` → `sshd*`, so it matches the `sshd-session`
+> processes OpenSSH 9.8+ creates rather than relying on the listener being present.
+> 
+> **Installed files and checksums are unchanged.** This edit touches only the
+> foreground/background decision — every payload, `FIXED_*` / `ACCEPTED_PRIOR_*` checksum,
+> version gate, marker and backup path is byte-identical to the version originally shipped,
+> so an on-device copy predating this note installs exactly the same bytes.
+
 > ## ✅ A2 PASSED ON HARDWARE. One unrelated blocker remains.
 >
 > Validated on three units — v1.1.4, v1.0.10 and v1.1.0, covering **both** hardware lines.
