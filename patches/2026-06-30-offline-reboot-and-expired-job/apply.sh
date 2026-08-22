@@ -42,6 +42,8 @@ BACKUP_DIR="${PATCH_STATE_DIR}/backup"
 MARKER_FILE="${PATCH_STATE_DIR}/applied"
 LOG="${PATCH_STATE_DIR}/apply.log"
 SERVICE="mqtt-client.service"
+FORCE_INLINE=0
+FORCE_DETACH=0
 
 # sha256 of the deployed mqtt-client.js. FIXED_SHA is the desired end state (the
 # combined rollup), identical to what v1.0.10 / v1.1.4 will ship. ACCEPTED_PRIOR_SHAS
@@ -83,12 +85,52 @@ node_check() {
   "$node_bin" --check "$1"
 }
 
+# Is this an SSH session? The obvious test -- $SSH_CONNECTION -- is NOT sufficient:
+# sudo's env_reset strips SSH_CONNECTION/SSH_CLIENT/SSH_TTY, and the documented way to
+# run this script is `sudo ./apply.sh`. Checking only the environment therefore reports
+# "local console" over SSH, the restart runs inline, and it kills the ngrok tunnel it is
+# running over -- the precise failure the detach exists to prevent. So fall back to
+# walking the parent process chain for sshd, which survives sudo.
+# Added 2026-08-22 by BUG-047, replacing the $SSH_CONNECTION-only guard this script
+# shipped with. Kept byte-identical to the 2026-08-20 patches' copy on purpose.
+#
+# NOTE the glob in the walk below. OpenSSH 9.8+ splits the per-connection process out
+# as `sshd-session` and keeps the bare name `sshd` only for the top-level listener. So
+# an exact `== sshd` test does NOT match the processes directly above us -- it succeeds
+# only by climbing all the way past both sshd-session frames to the listener, which is
+# not what this walk is meant to be doing. Under systemd socket activation (ssh.socket)
+# sshd-session is spawned by systemd and the chain becomes
+#   sudo -> sshd-session -> sshd-session -> systemd(1)
+# with no `sshd` anywhere: detection would report "local console", the restart would run
+# INLINE, and this exact bug would reappear silently inside a patch that reads as fixed.
+# `sshd*` matches sshd-session at the immediate parent. It is a strict superset of the
+# old test, so it cannot regress a unit where `sshd` already worked (including
+# OpenSSH < 9.8, which has no sshd-session at all), and sshd-session/sshd-auth exist
+# only to service a real SSH connection, so it cannot false-positive.
+# Measured on Debian 13 / OpenSSH_10.0p2, both hardware lines, 2026-08-22 (BUG-047).
+# The socket-activation case above is a reasoned projection from measured process
+# topology, NOT an observed failure -- ssh.socket is disabled on both bench devices.
+is_remote_session() {
+  [[ $FORCE_INLINE -eq 1 ]] && return 1
+  [[ $FORCE_DETACH -eq 1 ]] && return 0
+  [[ -n "${SSH_CONNECTION:-}${SSH_CLIENT:-}${SSH_TTY:-}" ]] && return 0
+  local pid=${PPID:-0} comm guard=0
+  while [[ $pid -gt 1 && $guard -lt 32 ]]; do
+    comm="$(cat "/proc/$pid/comm" 2>/dev/null || true)"
+    [[ $comm == sshd* ]] && return 0
+    pid="$(awk '{print $4}' "/proc/$pid/stat" 2>/dev/null || echo 0)"
+    [[ -z $pid ]] && pid=0
+    guard=$((guard + 1))
+  done
+  return 1
+}
+
 # Run a finalize step (which restarts mqtt-client and thus drops an ngrok SSH
 # tunnel). Over SSH, re-exec it detached via setsid so the session drop can't
 # kill it mid-restart; results go to $LOG. On a local console, run inline.
 run_detached_if_ssh() {
   local internal_cmd=$1; shift
-  if [[ -n "${SSH_CONNECTION:-}" ]]; then
+  if is_remote_session; then
     mkdir -p "$PATCH_STATE_DIR"
     log "Over SSH: restarting $SERVICE will CLOSE this session (ngrok runs inside it)."
     log "Running '$internal_cmd' DETACHED so the tunnel drop can't interrupt it; logging to:"
@@ -217,6 +259,14 @@ do_apply() {
 # -----------------------------------------------------------------------------
 # Entry point
 # -----------------------------------------------------------------------------
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --inline)  FORCE_INLINE=1; shift ;;
+    --detach)  FORCE_DETACH=1; shift ;;
+    *) break ;;
+  esac
+done
+
 case "${1:-apply}" in
   apply)                do_apply ;;
   --rollback)           do_rollback ;;
@@ -224,9 +274,11 @@ case "${1:-apply}" in
   __finalize_rollback)  __finalize_rollback ;;
   -h|--help)
     cat <<EOF
-Usage: $0 [apply|--rollback]
+Usage: $0 [--inline|--detach] [apply|--rollback]
   apply       (default) apply the patch
   --rollback  restore the pre-patch mqtt-client.js from backup
+  --inline    force the restart+verify to run in the foreground
+  --detach    force the restart+verify to run detached
 
 Restarting mqtt-client.service drops the ngrok SSH tunnel (ngrok runs inside it),
 so over SSH the restart+verify runs detached and logs to:
