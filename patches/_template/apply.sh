@@ -46,6 +46,20 @@ file_sha() { sha256sum "$1" 2>/dev/null | awk '{print $1}'; }
 
 require_root() { [[ $EUID -eq 0 ]] || fail "must be run as root (use: sudo $0)"; }
 
+# --- Safety: this file is a TEMPLATE, not a patch -----------------------------
+# Without this guard, `sudo ./apply.sh` on an unedited template would sail past the
+# unwritten TODOs and reach run_detached_if_ssh -> __finalize_apply, which RESTARTS
+# mqtt-client.service on a live device: no gates checked, nothing installed, service
+# bounced for nothing. The leading underscore and the header are conventions; this is
+# the part that actually enforces it. Setting PATCH_ID to your real directory name is
+# what disarms it -- which is step one of using the template anyway.
+PLACEHOLDER_PATCH_ID="YYYY-MM-DD-short-slug"
+assert_not_template() {
+  [[ $PATCH_ID != "$PLACEHOLDER_PATCH_ID" ]] || fail \
+    "this is patches/_template -- a skeleton, not a patch. Copy it, then set PATCH_ID to the new directory name. See ./README.md"
+}
+
+
 # Is this an SSH session? The obvious test -- $SSH_CONNECTION -- is NOT sufficient:
 # sudo's env_reset strips SSH_CONNECTION/SSH_CLIENT/SSH_TTY, and the documented way to
 # run this script is `sudo ./apply.sh`. Checking only the environment therefore reports
@@ -122,6 +136,7 @@ run_detached_if_ssh() {
 # ARGUMENTS -- they cannot see locals from do_apply/do_rollback.
 __finalize_apply() {
   local v=$1
+  assert_not_template
   log "Restarting $SERVICE..."
   systemctl daemon-reload
   systemctl restart "$SERVICE"
@@ -140,6 +155,7 @@ __finalize_apply() {
 }
 
 __finalize_rollback() {
+  assert_not_template
   log "Restarting $SERVICE..."
   systemctl daemon-reload
   systemctl restart "$SERVICE"
@@ -148,6 +164,7 @@ __finalize_rollback() {
 }
 
 do_check() {
+  assert_not_template
   log "DRY RUN -- nothing will be changed."
   log "Deployed sha: $(file_sha /path/to/target)"
   if is_remote_session; then log "Detection: REMOTE -- a real run would DETACH."
@@ -156,6 +173,7 @@ do_check() {
 
 do_apply() {
   require_root
+  assert_not_template
   local v; v="$(cat "$VERSION_FILE" 2>/dev/null || echo unknown)"
   log "Detected device version: $v"
 
@@ -168,6 +186,7 @@ do_apply() {
 
 do_rollback() {
   require_root
+  assert_not_template
   [[ -d $BACKUP_DIR ]] || fail "no backup directory at $BACKUP_DIR -- nothing to roll back"
   # TODO restore originals from $BACKUP_DIR.
   run_detached_if_ssh __finalize_rollback
