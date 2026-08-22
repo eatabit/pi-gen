@@ -114,6 +114,9 @@
 # is carried by hand from the 2026-08-20 rollup -- $SSH_CONNECTION alone is not
 # sufficient because sudo's env_reset strips it (BUG-047), and there is no
 # shared patch helper to source.
+# 2026-08-22 (BUG-047): the hand-copied test matched `sshd` exactly, which misses the
+# `sshd-session` frames OpenSSH 9.8+ creates; corrected to `sshd*`. See the note above
+# is_remote_session(). Installed files and checksums are unchanged by that correction.
 #
 # Usage:
 #   sudo ./apply.sh              # apply
@@ -329,6 +332,23 @@ unit_check() {
   return $rc
 }
 
+#
+# NOTE the glob in the walk below. OpenSSH 9.8+ splits the per-connection process out
+# as `sshd-session` and keeps the bare name `sshd` only for the top-level listener. So
+# an exact `== sshd` test does NOT match the processes directly above us -- it succeeds
+# only by climbing all the way past both sshd-session frames to the listener, which is
+# not what this walk is meant to be doing. Under systemd socket activation (ssh.socket)
+# sshd-session is spawned by systemd and the chain becomes
+#   sudo -> sshd-session -> sshd-session -> systemd(1)
+# with no `sshd` anywhere: detection would report "local console", the restart would run
+# INLINE, and this exact bug would reappear silently inside a patch that reads as fixed.
+# `sshd*` matches sshd-session at the immediate parent. It is a strict superset of the
+# old test, so it cannot regress a unit where `sshd` already worked (including
+# OpenSSH < 9.8, which has no sshd-session at all), and sshd-session/sshd-auth exist
+# only to service a real SSH connection, so it cannot false-positive.
+# Measured on Debian 13 / OpenSSH_10.0p2, both hardware lines, 2026-08-22 (BUG-047).
+# The socket-activation case above is a reasoned projection from measured process
+# topology, NOT an observed failure -- ssh.socket is disabled on both bench devices.
 is_remote_session() {
   [[ $FORCE_INLINE -eq 1 ]] && return 1
   [[ $FORCE_DETACH -eq 1 ]] && return 0
@@ -336,7 +356,7 @@ is_remote_session() {
   local pid=${PPID:-0} comm guard=0
   while [[ $pid -gt 1 && $guard -lt 32 ]]; do
     comm="$(cat "/proc/$pid/comm" 2>/dev/null || true)"
-    [[ $comm == sshd ]] && return 0
+    [[ $comm == sshd* ]] && return 0
     pid="$(awk '{print $4}' "/proc/$pid/stat" 2>/dev/null || echo 0)"
     [[ -z $pid ]] && pid=0
     guard=$((guard + 1))
