@@ -20,6 +20,11 @@
 > version gate, marker and backup path is byte-identical to the version originally shipped,
 > so an on-device copy predating this note installs exactly the same bytes.
 
+> **Also revised 2026-08-22 — BUG-047.** The detached step is now re-exec'd via
+> `bash "$SELF"` rather than executing `$SELF` directly, so a copy delivered without
+> its executable bit fails loudly instead of logging "running DETACHED", exiting 0 and
+> doing nothing. Installed files and checksums are unchanged by this too.
+
 Combined `mqtt-client.js` rollup of two fixes. **Supersedes the earlier
 `2026-06-25-offline-reboot-loop` patch** (now removed) — this is the offline-reboot fix plus the
 expired-job/stuck-`IN_PROGRESS` fix, and it accepts that patch's file (`51a012ae…`) as an
