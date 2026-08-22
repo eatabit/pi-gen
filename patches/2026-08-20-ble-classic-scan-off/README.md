@@ -19,6 +19,11 @@
 > version gate, marker and backup path is byte-identical to the version originally shipped,
 > so an on-device copy predating this note installs exactly the same bytes.
 
+> **Also revised 2026-08-22 — BUG-047.** The detached step is now re-exec'd via
+> `bash "$SELF"` rather than executing `$SELF` directly, so a copy delivered without
+> its executable bit fails loudly instead of logging "running DETACHED", exiting 0 and
+> doing nothing. Installed files and checksums are unchanged by this too.
+
 > ## ✅ A2 PASSED ON HARDWARE. One unrelated blocker remains.
 >
 > Validated on three units — v1.1.4, v1.0.10 and v1.1.0, covering **both** hardware lines.

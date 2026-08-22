@@ -19,6 +19,11 @@
 > version gate, marker and backup path is byte-identical to the version originally shipped,
 > so an on-device copy predating this note installs exactly the same bytes.
 
+> **Also revised 2026-08-22 — BUG-047.** The detached step is now re-exec'd via
+> `bash "$SELF"` rather than executing `$SELF` directly, so a copy delivered without
+> its executable bit fails loudly instead of logging "running DETACHED", exiting 0 and
+> doing nothing. Installed files and checksums are unchanged by this too.
+
 **Severity: High.** This is the remote-access path every other field patch is delivered
 over. While it is broken, a patch campaign degrades to *reboot → connect → patch →
 reboot* per device — and **each reboot drops in-flight print jobs**, so the maintenance
