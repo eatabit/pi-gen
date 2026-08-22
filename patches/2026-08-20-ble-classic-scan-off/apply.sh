@@ -384,7 +384,7 @@ run_detached_if_ssh() {
     if command -v setsid >/dev/null 2>&1; then
       setsid bash "$SELF" "$internal_cmd" "$@" </dev/null >>"$LOG" 2>&1 &
     else
-      nohup  bash "$SELF" "$internal_cmd" "$@" </dev/null >>"$LOG" 2>&1 &
+      nohup bash "$SELF" "$internal_cmd" "$@" </dev/null >>"$LOG" 2>&1 &
     fi
     disown 2>/dev/null || true
     exit 0
