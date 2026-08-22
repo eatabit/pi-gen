@@ -114,10 +114,17 @@ run_detached_if_ssh() {
     log "After reconnecting (re-issue the startNgrokTunnel cloud command), check:"
     log "  cat $LOG"
     log "  cat $MARKER_FILE"
+    # Re-exec via `bash "$SELF"` rather than executing $SELF directly: if this patch
+    # directory were delivered by any route that drops the executable bit (a zip, tar
+    # without -p, copy-paste into a new file), a direct exec fails with "Permission
+    # denied" INSIDE the detached child -- while the foreground has already logged
+    # "running DETACHED" and exited 0. The operator sees success and nothing ran.
+    # scp -r preserves the bit and these files are 100755 in git, so this is belt and
+    # braces, not a live defect (BUG-047, 2026-08-22).
     if command -v setsid >/dev/null 2>&1; then
-      setsid "$SELF" "$internal_cmd" "$@" </dev/null >>"$LOG" 2>&1 &
+      setsid bash "$SELF" "$internal_cmd" "$@" </dev/null >>"$LOG" 2>&1 &
     else
-      nohup "$SELF" "$internal_cmd" "$@" </dev/null >>"$LOG" 2>&1 &
+      nohup bash "$SELF" "$internal_cmd" "$@" </dev/null >>"$LOG" 2>&1 &
     fi
     disown 2>/dev/null || true
     exit 0
