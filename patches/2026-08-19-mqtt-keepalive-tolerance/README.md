@@ -104,7 +104,14 @@ sudo ./apply.sh --rollback
 - `node --check` on the bundled file **before** install, and again on the installed file.
 - **Auto-restore**: if `mqtt-client.service` does not come back `active`, the original is put
   back and the service restarted before the script fails.
-- Idempotent: re-running on a device already at `FIXED_SHA` no-ops.
+- Idempotent: re-running on a device already at `FIXED_SHA` **with a completion marker** no-ops.
+- **Interrupted applies are resumable, not silently swallowed.** The file is installed *before*
+  the service restarts, so an apply killed in between (dropped tunnel, `SIGPIPE`, operator
+  `^C`) leaves the new file on disk with the **old code still running in memory**. The marker
+  is written only after the service comes back `active`, so *at `FIXED_SHA` with no marker*
+  means exactly that state — and re-running finishes the restart instead of reporting a
+  no-op. `--check` reports it as `WOULD APPLY`, not `NO-OP`. Observed on a bench device
+  2026-08-23.
 - `--rollback` restores from the backup and restarts.
 
 ## Image source
