@@ -17,8 +17,12 @@ fi
 echo "Creating eatabit lib log directory..."
 if mkdir -p "${ROOTFS_DIR}${EATABIT_ROOT_DIR}/log"; then
   echo "Successfully created ${EATABIT_ROOT_DIR}/log"
-  # Ensure log directory has permissive mode
-  chmod 0777 "${ROOTFS_DIR}${EATABIT_ROOT_DIR}/log"
+  # ISSUE-068: 0755, not 0777. logrotate REFUSES to rotate a file whose parent
+  # directory is world-writable unless the config carries an `su` directive, so
+  # 0777 here silently disabled rotation for mqtt-client.log on every image ever
+  # built. Every writer into this directory runs as root (all eight units that
+  # touch /usr/local/lib/eatabit), so 0755 costs nothing. Do not widen this back.
+  chmod 0755 "${ROOTFS_DIR}${EATABIT_ROOT_DIR}/log"
 else
   echo "Failed to create ${EATABIT_ROOT_DIR}/log"
   exit 1

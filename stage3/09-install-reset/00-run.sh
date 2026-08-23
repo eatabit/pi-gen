@@ -5,7 +5,10 @@ echo "Installing device reset mechanism..."
 
 # Create reset directory with proper permissions
 mkdir -p "${ROOTFS_DIR}/usr/local/lib/eatabit/reset"
-chmod 777 "${ROOTFS_DIR}/usr/local/lib/eatabit/reset"
+# ISSUE-068: 0755, not 0777. Nothing rotates this directory today, so it was not
+# a live defect -- but the only writer (device-reset.service) runs as root, so
+# the permissive mode bought nothing and would block rotation if ever added.
+chmod 0755 "${ROOTFS_DIR}/usr/local/lib/eatabit/reset"
 
 # Install pre-generated reset.escpos (regenerate with: node files/png-to-escpos.mjs)
 install -D -m 0644 files/reset.escpos "${ROOTFS_DIR}/usr/local/lib/eatabit/reset/reset.escpos"

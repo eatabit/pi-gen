@@ -102,7 +102,7 @@ function saveCutterType(value) {
   try {
     const configDir = path.dirname(CUTTER_CONFIG_FILE);
     if (!fs.existsSync(configDir)) {
-      fs.mkdirSync(configDir, { recursive: true, mode: 0o777 });
+      fs.mkdirSync(configDir, { recursive: true, mode: 0o755 });
     }
     fs.writeFileSync(
       CUTTER_CONFIG_FILE,
@@ -111,7 +111,7 @@ function saveCutterType(value) {
         null,
         2,
       ),
-      { mode: 0o666 },
+      { mode: 0o644 },
     );
     log(`Saved cutter type to config: ${value}`);
   } catch (err) {
@@ -147,7 +147,7 @@ function saveVolume(value) {
   try {
     const configDir = path.dirname(VOLUME_CONFIG_FILE);
     if (!fs.existsSync(configDir)) {
-      fs.mkdirSync(configDir, { recursive: true, mode: 0o777 });
+      fs.mkdirSync(configDir, { recursive: true, mode: 0o755 });
     }
     fs.writeFileSync(
       VOLUME_CONFIG_FILE,
@@ -156,7 +156,7 @@ function saveVolume(value) {
         null,
         2,
       ),
-      { mode: 0o666 },
+      { mode: 0o644 },
     );
     log(`Saved volume setting to config: ${value}`);
   } catch (err) {
@@ -187,10 +187,10 @@ function initializeLogFile() {
   try {
     const logDir = path.dirname(LOG_FILE);
     if (!fs.existsSync(logDir)) {
-      fs.mkdirSync(logDir, { recursive: true, mode: 0o777 });
+      fs.mkdirSync(logDir, { recursive: true, mode: 0o755 });
     }
     if (!fs.existsSync(LOG_FILE)) {
-      fs.writeFileSync(LOG_FILE, "", { mode: 0o666 });
+      fs.writeFileSync(LOG_FILE, "", { mode: 0o644 });
     }
   } catch (err) {
     console.error(`Failed to initialize log file: ${err.message}`);

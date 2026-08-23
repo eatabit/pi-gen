@@ -65,10 +65,10 @@ function initializeLogFile() {
   try {
     const logDir = path.dirname(LOG_FILE);
     if (!fs.existsSync(logDir)) {
-      fs.mkdirSync(logDir, { recursive: true, mode: 0o777 });
+      fs.mkdirSync(logDir, { recursive: true, mode: 0o755 });
     }
     if (!fs.existsSync(LOG_FILE)) {
-      fs.writeFileSync(LOG_FILE, "", { mode: 0o666 });
+      fs.writeFileSync(LOG_FILE, "", { mode: 0o644 });
     }
   } catch (err) {
     console.error(`Failed to initialize log file: ${err.message}`);
@@ -352,7 +352,7 @@ function watchCutterConfigFile() {
 
   // Ensure config directory exists
   if (!fs.existsSync(configDir)) {
-    fs.mkdirSync(configDir, { recursive: true, mode: 0o777 });
+    fs.mkdirSync(configDir, { recursive: true, mode: 0o755 });
   }
 
   // Debounce to prevent multiple triggers
@@ -402,7 +402,7 @@ function watchVolumeConfigFile() {
 
   // Ensure config directory exists
   if (!fs.existsSync(configDir)) {
-    fs.mkdirSync(configDir, { recursive: true, mode: 0o777 });
+    fs.mkdirSync(configDir, { recursive: true, mode: 0o755 });
   }
 
   // Debounce to prevent multiple triggers
@@ -872,7 +872,48 @@ function isJobExpired(expiresAt) {
   return Number(expiresAt) < Math.floor(Date.now() / 1000);
 }
 
+// ISSUE-068: canonical JSON -- object keys emitted in sorted order, recursively.
+// Used only to compare shadow state against what is already on disk. Plain
+// JSON.stringify would report a difference whenever key insertion order changed,
+// which would reintroduce the redundant writes this exists to avoid. Arrays keep
+// their order; only object keys are sorted.
+function canonicalJson(value) {
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalJson).join(",")}]`;
+  }
+  if (value !== null && typeof value === "object") {
+    const body = Object.keys(value)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${canonicalJson(value[k])}`)
+      .join(",");
+    return `{${body}}`;
+  }
+  return JSON.stringify(value);
+}
+
+// ISSUE-068: last-written state per shadow, so the steady-state case costs no
+// disk read at all. Empty after a restart -- the on-disk file is consulted once
+// to repopulate it, so a restart does not force a redundant write either.
+const lastPersistedShadowState = {};
+
 // Helper function to persist shadow state to file
+//
+// ISSUE-068: writes ONLY when the state has actually changed.
+//
+// This used to rewrite the whole file on every call. The health shadow fires on a
+// 15-minute interval, so shadow-health.json was rewritten 96 times a day -- about
+// 159 KiB/day of whole-file rewrites straight to the SD card (the eatabit config
+// directory is not RAM-buffered), roughly 7x the entire log directory. The state
+// itself is almost always identical between cycles; it was the embedded
+// `timestamp` that made every serialisation differ, so a naive content-equality
+// check would never have skipped anything. The comparison below deliberately
+// covers `state` ONLY.
+//
+// `timestamp` therefore now means LAST CHANGE, not last check. That is safe for
+// liveness: this file is write-only -- nothing in this repo or on a device reads
+// it back -- and the 15-minute MQTT publish to AWS IoT Core in
+// updateShadowReportedState() is unchanged, so cloud-side freshness is unaffected.
+// The per-cycle heartbeat also remains visible in mqtt-client.log.
 function persistShadowToFile(shadowName) {
   try {
     const shadowConfig = SHADOW_CONFIG[shadowName];
@@ -887,7 +928,28 @@ function persistShadowToFile(shadowName) {
 
     // Ensure directory exists
     if (!fs.existsSync(configDir)) {
-      fs.mkdirSync(configDir, { recursive: true, mode: 0o777 });
+      fs.mkdirSync(configDir, { recursive: true, mode: 0o755 });
+    }
+
+    const currentState = canonicalJson(shadowConfig.state);
+
+    // Nothing changed since the last write in this process -- skip the write.
+    if (lastPersistedShadowState[shadowName] === currentState) {
+      return;
+    }
+
+    // First call since start-up: consult the file before writing, so a restart
+    // does not itself cause a redundant rewrite.
+    if (lastPersistedShadowState[shadowName] === undefined) {
+      try {
+        const onDisk = JSON.parse(fs.readFileSync(filePath, "utf8"));
+        if (canonicalJson(onDisk.state) === currentState) {
+          lastPersistedShadowState[shadowName] = currentState;
+          return;
+        }
+      } catch (err) {
+        // Missing, unreadable or malformed -- fall through and write it.
+      }
     }
 
     // Write shadow state to file
@@ -901,7 +963,8 @@ function persistShadowToFile(shadowName) {
       2,
     );
 
-    fs.writeFileSync(filePath, stateData, { mode: 0o666 });
+    fs.writeFileSync(filePath, stateData, { mode: 0o644 });
+    lastPersistedShadowState[shadowName] = currentState;
     log(`Persisted ${shadowName} shadow to ${filePath}`);
   } catch (err) {
     log(`Failed to persist shadow to file: ${err.message}`, "ERROR");
@@ -1917,12 +1980,12 @@ async function main() {
             // Ensure reset directory exists with proper permissions
             if (!fs.existsSync(RESET_DIR)) {
               log("Creating reset directory...");
-              fs.mkdirSync(RESET_DIR, { recursive: true, mode: 0o777 });
+              fs.mkdirSync(RESET_DIR, { recursive: true, mode: 0o755 });
             }
 
             // Create reset flag
             log("Setting device reset flag...");
-            fs.writeFileSync(RESET_FLAG, "1", { mode: 0o666 });
+            fs.writeFileSync(RESET_FLAG, "1", { mode: 0o644 });
 
             log("Device reset flag set successfully");
 
