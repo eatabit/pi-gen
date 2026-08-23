@@ -255,7 +255,13 @@ do_check() {
   else                       printf 'detection      LOCAL -- a real run would go INLINE\n'; fi
 
   case $js_state in
-    current) printf 'RESULT         NO-OP -- already patched\n';            return 0 ;;
+    current)
+      if [[ -f $MARKER_FILE ]]; then
+        printf 'RESULT         NO-OP -- already patched\n'; return 0
+      fi
+      printf 'RESULT         WOULD APPLY -- file is patched but the apply never completed\n'
+      printf '               (no marker); a real run would restart %s to finish it\n' "$SERVICE"
+      return 2 ;;
     upgrade) printf 'RESULT         WOULD APPLY -- installs mqtt-client.js, then ONE mqtt-client restart\n'; return 2 ;;
     *)       printf 'RESULT         WOULD REFUSE -- unrecognized mqtt-client.js; nothing would be modified\n'; return 1 ;;
   esac
@@ -272,11 +278,26 @@ do_apply() {
   [[ -f $MQTT_CLIENT_JS ]] || fail "$MQTT_CLIENT_JS not found."
   js_sha="$(file_sha "$MQTT_CLIENT_JS")"
 
-  # Idempotency: already carries the fix.
+  # Idempotency -- but ONLY when the apply actually completed.
+  #
+  # The file being at FIXED_SHA is NOT sufficient. do_apply installs the file and THEN
+  # restarts; if it is interrupted between those two steps -- a dropped tunnel, a SIGPIPE,
+  # an operator ^C -- the device is left with the new file on disk and the OLD code still
+  # running in memory. A naive "sha matches, nothing to do" would then write a success
+  # marker and exit 0, reporting a fix that is not actually in effect until something else
+  # happens to restart the service. Observed on a bench device 2026-08-23.
+  #
+  # The marker is written only by __finalize_apply, AFTER the service comes back active. So
+  # "at FIXED_SHA with no marker" means an interrupted apply: finish it by restarting.
   if [[ $js_sha == "$FIXED_SHA" ]]; then
-    log "mqtt-client.js already contains the fix. Nothing to do."
+    if [[ -f $MARKER_FILE ]]; then
+      log "mqtt-client.js already contains the fix and the apply completed. Nothing to do."
+      exit 0
+    fi
+    log "mqtt-client.js is at the fixed sha but no completion marker is present."
+    log "This is an interrupted apply -- finishing it now by restarting $SERVICE."
     mkdir -p "$PATCH_STATE_DIR"
-    [[ -f $MARKER_FILE ]] || printf 'applied_at=%s\nfrom_version=%s\nresult=success\n' "$(date -Iseconds)" "$v" > "$MARKER_FILE"
+    run_detached_if_ssh __finalize_apply "$v"
     exit 0
   fi
 
