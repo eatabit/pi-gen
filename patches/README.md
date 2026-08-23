@@ -24,7 +24,7 @@ planning a campaign; the directory listing on its own will mislead you.
 
 | Lineage | Target files | Patches, in order |
 |---|---|---|
-| **`mqtt-client`** | `/usr/local/lib/eatabit/bin/mqtt-client.js`, `/etc/systemd/system/mqtt-client.service` | 1. [`2026-05-12-watchdog-exit-hang`](./2026-05-12-watchdog-exit-hang/)<br>2. [`2026-06-30-offline-reboot-and-expired-job`](./2026-06-30-offline-reboot-and-expired-job/)<br>3. [`2026-08-20-ngrok-session-reclaim`](./2026-08-20-ngrok-session-reclaim/) — **self-contained** |
+| **`mqtt-client`** | `/usr/local/lib/eatabit/bin/mqtt-client.js`, `/etc/systemd/system/mqtt-client.service` | 1. [`2026-05-12-watchdog-exit-hang`](./2026-05-12-watchdog-exit-hang/)<br>2. [`2026-06-30-offline-reboot-and-expired-job`](./2026-06-30-offline-reboot-and-expired-job/)<br>3. [`2026-08-20-ngrok-session-reclaim`](./2026-08-20-ngrok-session-reclaim/) — **self-contained**<br>4. [`2026-08-19-mqtt-keepalive-tolerance`](./2026-08-19-mqtt-keepalive-tolerance/) — **requires 3** |
 | **`bluetooth`** | `/etc/bluetooth/main.conf`, `/etc/systemd/system/bluetooth-poweron.service` | 1. [`2026-08-20-ble-classic-scan-off`](./2026-08-20-ble-classic-scan-off/) — **independent** |
 | **`timezone`** | `/etc/timezone`, `/etc/localtime` (symlink) | 1. [`2026-08-19-gateway-timezone-utc`](./2026-08-19-gateway-timezone-utc/) — **independent** |
 
@@ -41,6 +41,13 @@ authorship, not a sequence.
 accepts stock v1.0.8–v1.0.10 / v1.1.2–v1.1.4 *and* the output of every earlier patch in the
 lineage, so it can be applied directly to any of them. The numbering above is provenance —
 how the code got here — not a sequence you must replay.
+
+**The one real prerequisite in this lineage is the newest patch.**
+`2026-08-19-mqtt-keepalive-tolerance` accepts **only** the output of
+`2026-08-20-ngrok-session-reclaim` (`1d49a43a…`), because its `mqtt-client.js` expects
+`/run/eatabit`, which exists only under that patch's unit. Its directory name is dated
+**earlier** than the patch it depends on — the date records when the bug was filed, not
+the order. **Read the lineage column, never the dates.**
 
 ### How to tell for yourself, without trusting this table
 
@@ -96,6 +103,7 @@ marker. Renaming a patch that has ever been applied in the field orphans those, 
 | 2026-08-19 | [`2026-08-19-gateway-timezone-utc`](./2026-08-19-gateway-timezone-utc/) | v1.0.1–v1.0.10, v1.1.1–v1.1.4 — **all 14 released tags** (gated on the deployed timezone, not a checksum: this patch replaces no file) | Low (P3) — no device misbehaves, but every on-device timestamp is wrong for its site (11 h in Hawaii) and `Europe/London` shifts it again twice a year. It already misled the `ISSUE-064` investigation. **Restarts nothing** — safe on a live, printing device |
 | 2026-08-20 | [`2026-08-20-ngrok-session-reclaim`](./2026-08-20-ngrok-session-reclaim/) | **supersedes the 2026-08-19 patch** — self-contained rollup, no prerequisite; accepts stock v1.0.8–v1.0.10 / v1.1.2–v1.1.4, the 2026-06 intermediates, and the 2026-08-19 output (checksum-gated, js **and** unit) | High — one connect/disconnect cycle wedges remote SSH until `mqtt-client` restarts; this is the delivery path every other patch ships over |
 | 2026-08-20 | [`2026-08-20-ble-classic-scan-off`](./2026-08-20-ble-classic-scan-off/) | v1.0.1–v1.0.10, v1.1.0–v1.1.4 (checksum-gated; `00-run.sh` is byte-identical across all 15 tags, so one prior sha per file) | Medium — fleet-wide WiFi latency/jitter tax from permanent BR/EDR scanning on a shared antenna. **Validated on hardware** 2026-08-21 on v1.1.4 / v1.0.10 / v1.1.0 (both lines): jitter 1.84x better, A2 passed — a stranded device is still discoverable and connectable from Android and iOS. **Fleet rollout gated on `BUG-051`**, which is pre-existing and unrelated: a device that has lost WiFi cannot be re-provisioned through the app's network list, patched or not. |
+| 2026-08-19 | [`2026-08-19-mqtt-keepalive-tolerance`](./2026-08-19-mqtt-keepalive-tolerance/) | devices at the `2026-08-20-ngrok-session-reclaim` end state (sha `1d49a43a…`), which is also repo source on both lines — checksum-gated, **js only**, exactly one accepted prior | Medium — one late `PINGRESP` tears down a healthy connection; every disconnect on `00000000d9b7e5d1` was `AWS_ERROR_MQTT_TIMEOUT` at `n × 30 s + ~3.2 s` while WiFi never dropped. Widens the ping window 3 s → 10 s; genuine-offline detection 33 s → 40 s. **Validated on hardware** 2026-08-23 on **both lines** — v1.1.4 / v1.1.0 (`hw/1.1`) and v1.0.10 (`hw/1.0`): applied, one restart each, reconnected to AWS IoT, zero errors; `--check` exit codes 0/1/2 confirmed. Also applied to one authorized field device on v1.1.1. At that date the >=24 h soak and the `--rollback` exercise had not yet been run; see `BUG-045` for their outcome. (`BUG-045`) |
 
 > **Restarts nothing at all:** `2026-08-19-gateway-timezone-utc` goes further than the
 > note below — it restarts no service whatsoever, so it cannot drop the ngrok tunnel, the
