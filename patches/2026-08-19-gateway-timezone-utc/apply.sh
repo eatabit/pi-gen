@@ -74,9 +74,16 @@ FIXED_ZONE="Etc/UTC"                      # desired end state
 # a reason in the README, or refuse it deliberately. Do not widen this list silently
 # to make one device pass.
 ACCEPTED_PRIOR_ZONES=("Europe/London")
-KNOWN_VERSIONS=("v1.0.1" "v1.0.2" "v1.0.3" "v1.0.4" "v1.0.5" "v1.0.6" "v1.0.7" \
-                "v1.0.8" "v1.0.9" "v1.0.10" \
-                "v1.1.1" "v1.1.2" "v1.1.3" "v1.1.4")   # informational only
+# NOTE: no "v" prefix -- /usr/local/lib/eatabit/version holds e.g. `1.1.0`, and the
+# other patches here list it the same way. A "v"-prefixed list silently matches
+# nothing and reports every device as unknown.
+# 1.1.0 IS included even though no v1.1.0 git tag exists (see ./README.md): devices
+# reporting 1.1.0 are in the field -- 0000000003c45d6d is one -- and the tag gap is a
+# separate housekeeping item in ISSUE-065. Informational either way; the gate is the
+# deployed timezone, never the version.
+KNOWN_VERSIONS=("1.0.1" "1.0.2" "1.0.3" "1.0.4" "1.0.5" "1.0.6" "1.0.7" \
+                "1.0.8" "1.0.9" "1.0.10" \
+                "1.1.0" "1.1.1" "1.1.2" "1.1.3" "1.1.4")   # informational only
 
 log()  { printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*"; }
 fail() { printf '[ERROR] %s\n' "$*" >&2; exit 1; }
@@ -248,9 +255,17 @@ set_zone() {
   # systemd owns /etc/localtime; whether it also rewrites /etc/timezone is
   # distribution-dependent. Write it explicitly so the two CANNOT disagree -- a
   # disagreement between them is precisely the confusion BUG-042 exists to remove.
-  if [[ "$(current_tz_file)" != "$zone" ]]; then
+  #
+  # This is LOAD-BEARING, not belt-and-braces. Measured on 0000000003c45d6d
+  # (v1.1.0, Debian trixie) 2026-08-23: `timedatectl set-timezone Etc/UTC` relinked
+  # /etc/localtime but left /etc/timezone reading Europe/London. Without this write
+  # the patch would itself CREATE the split-reading state it exists to eliminate.
+  local tz_file_after_timedatectl; tz_file_after_timedatectl="$(current_tz_file)"
+  if [[ $tz_file_after_timedatectl != "$zone" ]]; then
     printf '%s\n' "$zone" > /etc/timezone
-    log "Wrote /etc/timezone explicitly (timedatectl left it as '$(current_tz_file)')."
+    # Read BEFORE the write, or this reports the value we just wrote and reads as
+    # a contradiction ("left it as Etc/UTC" while explaining why it was not Etc/UTC).
+    log "Wrote /etc/timezone explicitly -- timedatectl left it as '${tz_file_after_timedatectl}'."
   fi
 }
 
