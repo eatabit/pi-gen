@@ -7,6 +7,10 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Device Node dependencies are now installed at a pinned version at first boot instead of unversioned. `stage2/04-cloud-init/files/user-data` resolved `aws-iot-device-sdk-v2`, `@ngrok/ngrok` and `@abandonware/bleno` from whatever npm `latest` happened to be on each device's first-boot day, so no two flashes were guaranteed the same tree and no release was reproducible — three bench devices carried two different `aws-crt` versions (1.33.1 and 1.32.1), the library that implements MQTT keep-alive and ping handling. They now install `aws-iot-device-sdk-v2@1.28.0`, `@ngrok/ngrok@1.7.0` and `@abandonware/bleno@0.6.2`, and the resulting set — including the transitively-fixed `aws-crt@1.33.1` — is recorded in `VERSIONS.md`, so a release tag identifies its dependency set without touching a device. Applies to newly flashed devices only; cloud-init `runcmd:` never re-runs on a provisioned device.
+
 ## [1.1.4] — 2026-06-30
 
 ### Fixed
