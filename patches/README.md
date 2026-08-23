@@ -26,6 +26,12 @@ planning a campaign; the directory listing on its own will mislead you.
 |---|---|---|
 | **`mqtt-client`** | `/usr/local/lib/eatabit/bin/mqtt-client.js`, `/etc/systemd/system/mqtt-client.service` | 1. [`2026-05-12-watchdog-exit-hang`](./2026-05-12-watchdog-exit-hang/)<br>2. [`2026-06-30-offline-reboot-and-expired-job`](./2026-06-30-offline-reboot-and-expired-job/)<br>3. [`2026-08-20-ngrok-session-reclaim`](./2026-08-20-ngrok-session-reclaim/) — **self-contained** |
 | **`bluetooth`** | `/etc/bluetooth/main.conf`, `/etc/systemd/system/bluetooth-poweron.service` | 1. [`2026-08-20-ble-classic-scan-off`](./2026-08-20-ble-classic-scan-off/) — **independent** |
+| **`timezone`** | `/etc/timezone`, `/etc/localtime` (symlink) | 1. [`2026-08-19-gateway-timezone-utc`](./2026-08-19-gateway-timezone-utc/) — **independent** |
+
+**`2026-08-19-gateway-timezone-utc` targets files no other patch touches** — it replaces
+no file at all, gating instead on the deployed timezone state — so it is independent of
+everything else here and may be applied at any point in a campaign. It is also the only
+patch that **restarts no service**.
 
 **The two `2026-08-20` patches share no file and therefore no checksum.** They may be
 applied in either order, or one without the other. The shared date is a coincidence of
@@ -87,8 +93,15 @@ marker. Renaming a patch that has ever been applied in the field orphans those, 
 | --- | --- | --- | --- |
 | 2026-05-12 | [`2026-05-12-watchdog-exit-hang`](./2026-05-12-watchdog-exit-hang/) | v1.0.2–v1.0.7, v1.1.0–v1.1.1 | Critical — devices can be offline indefinitely |
 | 2026-06-30 | [`2026-06-30-offline-reboot-and-expired-job`](./2026-06-30-offline-reboot-and-expired-job/) | stock/offline-reboot-patched mqtt-client.js (checksum-gated) | High — offline reboot loop + expired job blocks queue (combined rollup) |
+| 2026-08-19 | [`2026-08-19-gateway-timezone-utc`](./2026-08-19-gateway-timezone-utc/) | v1.0.1–v1.0.10, v1.1.1–v1.1.4 — **all 14 released tags** (gated on the deployed timezone, not a checksum: this patch replaces no file) | Low (P3) — no device misbehaves, but every on-device timestamp is wrong for its site (11 h in Hawaii) and `Europe/London` shifts it again twice a year. It already misled the `ISSUE-064` investigation. **Restarts nothing** — safe on a live, printing device |
 | 2026-08-20 | [`2026-08-20-ngrok-session-reclaim`](./2026-08-20-ngrok-session-reclaim/) | **supersedes the 2026-08-19 patch** — self-contained rollup, no prerequisite; accepts stock v1.0.8–v1.0.10 / v1.1.2–v1.1.4, the 2026-06 intermediates, and the 2026-08-19 output (checksum-gated, js **and** unit) | High — one connect/disconnect cycle wedges remote SSH until `mqtt-client` restarts; this is the delivery path every other patch ships over |
 | 2026-08-20 | [`2026-08-20-ble-classic-scan-off`](./2026-08-20-ble-classic-scan-off/) | v1.0.1–v1.0.10, v1.1.0–v1.1.4 (checksum-gated; `00-run.sh` is byte-identical across all 15 tags, so one prior sha per file) | Medium — fleet-wide WiFi latency/jitter tax from permanent BR/EDR scanning on a shared antenna. **Validated on hardware** 2026-08-21 on v1.1.4 / v1.0.10 / v1.1.0 (both lines): jitter 1.84x better, A2 passed — a stranded device is still discoverable and connectable from Android and iOS. **Fleet rollout gated on `BUG-051`**, which is pre-existing and unrelated: a device that has lost WiFi cannot be re-provisioned through the app's network list, patched or not. |
+
+> **Restarts nothing at all:** `2026-08-19-gateway-timezone-utc` goes further than the
+> note below — it restarts no service whatsoever, so it cannot drop the ngrok tunnel, the
+> SSH session applying it, or an in-flight print job. It is the only patch here with no
+> detached mode, because it has nothing to detach from. It records `mqtt-client`'s
+> `MainPID` before and after as evidence.
 
 > **Does not touch `mqtt-client`:** `2026-08-20-ble-classic-scan-off` is the first patch
 > here that changes neither `mqtt-client.js` nor `mqtt-client.service`. It therefore does
