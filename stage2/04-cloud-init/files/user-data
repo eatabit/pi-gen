@@ -131,8 +131,8 @@ runcmd:
       nmcli con modify "$con" connection.autoconnect yes connection.autoconnect-retries 0
     done
 
-  - npm install -g aws-iot-device-sdk-v2 # AWS IoT SDK
-  - npm install -g @ngrok/ngrok # Ngrok package
-  - npm install -g @abandonware/bleno # BLE package
+  - npm install -g aws-iot-device-sdk-v2@1.28.0 # AWS IoT SDK
+  - npm install -g @ngrok/ngrok@1.7.0 # Ngrok package
+  - npm install -g @abandonware/bleno@0.6.2 # BLE package
   - node /usr/local/lib/eatabit/bin/iot-provision.js # Provision device In AWS IoT
   - reboot # Reboot
