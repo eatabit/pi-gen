@@ -4,6 +4,10 @@ Manual patches to apply to already-deployed devices over SSH, without re-flashin
 
 Each subdirectory is a self-contained patch with its own `README.md` (bug summary + affected versions) and `apply.sh` (idempotent batch script). To apply: `scp -r` the patch directory to the device, then run `sudo ./apply.sh` over SSH.
 
+Most patches restart `mqtt-client.service`, which **closes the SSH session you are running them over** — ngrok runs inside that process. So over SSH the restart-and-verify step re-execs itself **detached** and logs to `/usr/local/lib/eatabit/patches/<PATCH_ID>/apply.log`; `sudo ./apply.sh` returns almost immediately and the work continues without you. Reconnect and read that log to find out how it went. `--check` is a no-root dry run that changes nothing, and `--inline` / `--detach` override the detection if you need to force either.
+
+New patches start from [`_template/`](./_template/) — **not** by copying whichever existing patch looks closest. See *Adding a patch* below.
+
 A patch lands here when:
 - A bug is severe enough that fleet devices need it before the next image build / OTA window.
 - The fix can be applied in-place by replacing files under `/usr/local/lib/eatabit/` and/or `/etc/systemd/system/` without re-imaging.
@@ -47,6 +51,27 @@ earlier field patch already altered. If two patches both report `would apply`, t
 independent by construction: each is gating on files the other does not touch.
 
 ### Adding a patch
+
+**Start from [`_template/`](./_template/)**, not from an existing patch:
+
+```bash
+cp -r patches/_template patches/YYYY-MM-DD-short-slug
+```
+
+Copying the nearest-looking patch is how this directory acquired the same SSH-detection
+defect four times over (`BUG-047`). The template is the one place that machinery is
+maintained; a patch is the place your fix goes. `_template/` is a skeleton, not a patch —
+it is not listed in the table above and must never be `scp`-ed to a device.
+
+**Any `apply.sh` that restarts a service MUST use parent-chain SSH detection matching
+`sshd*` — never `$SSH_CONNECTION` alone, and never a bare `sshd`.** `sudo` strips the
+environment variables, and OpenSSH 9.8+ names the per-connection processes `sshd-session`,
+so both shortcuts silently report "local console" over SSH and run the restart inline,
+killing the very session it was issued over. The re-exec must also go through
+`bash "$SELF"`, so a directory delivered without the executable bit fails loudly instead of
+silently. `_template/apply.sh` gets all of this right; the filled-in reference is
+[`2026-08-20-ngrok-session-reclaim/apply.sh`](./2026-08-20-ngrok-session-reclaim/apply.sh).
+Fix a defect in the template first, then sweep the copies.
 
 State its lineage in its `README.md` header block — the table at the top of every patch
 here — and add it to the table above. If it targets a file no existing lineage covers, it
