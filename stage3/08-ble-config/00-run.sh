@@ -148,5 +148,33 @@ echo "Enabling BLE configuration service..."
 # Enable service without systemctl during image build
 ln -sf /etc/systemd/system/ble-config.service /etc/systemd/system/multi-user.target.wants/ble-config.service
 
+# ------------------------------------------------------------------------------
+# ISSUE-068: rotate ble-config.log.
+#
+# Before this, /etc/logrotate.d/eatabit-mqtt-client was the ONLY logrotate config
+# the image wrote, so ble-config.log grew unbounded with nothing configured to
+# rotate it. Its measured steady-state growth is 0 B/h -- it is event-driven, not
+# periodic, and only grows on BLE pairing activity -- so the risk it carries is a
+# burst during a pairing storm, not a steady climb. That is why this stanza pairs
+# a time trigger with maxsize: daily rotation keeps the file bounded in normal
+# operation, and maxsize forces an out-of-band rotation if a burst outruns it.
+#
+# create 0644 (not 0666) and a 0755 parent directory are load-bearing: logrotate
+# refuses to act on a world-writable parent unless the config carries `su`.
+# ------------------------------------------------------------------------------
+echo "Configuring log rotation for ble-config..."
+cat > /etc/logrotate.d/eatabit-ble-config << 'LOGROTATE_EOF'
+/usr/local/lib/eatabit/log/ble-config.log {
+  daily
+  rotate 7
+  maxsize 5M
+  compress
+  delaycompress
+  missingok
+  notifempty
+  create 0644 root root
+}
+LOGROTATE_EOF
+
 echo "BLE WiFi configuration server installation complete!"
 EOF

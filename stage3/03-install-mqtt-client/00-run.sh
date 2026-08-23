@@ -15,15 +15,18 @@ echo "Client script installed to /usr/local/lib/eatabit/bin/mqtt-client.js"
 # Create config directory for shadow state persistence
 echo "Creating config directory for shadow persistence..."
 mkdir -p "${ROOTFS_DIR}/usr/local/lib/eatabit/config"
-chmod 777 "${ROOTFS_DIR}/usr/local/lib/eatabit/config"
+# ISSUE-068: 0755, not 0777 -- see stage3/01-create-eatabit-lib/00-run.sh.
+chmod 0755 "${ROOTFS_DIR}/usr/local/lib/eatabit/config"
 
-# Install default config files (readable/writable by mqtt-client and ble-config services)
+# Install default config files (read and written by mqtt-client and ble-config,
+# both of which run as User=root -- so 0644 suffices; ISSUE-068 dropped these
+# from 0666, which made them world-writable for no benefit.)
 echo "Installing default config files..."
-install -D -m 0666 files/cutter-type.json \
+install -D -m 0644 files/cutter-type.json \
   "${ROOTFS_DIR}/usr/local/lib/eatabit/config/cutter-type.json"
-install -D -m 0666 files/volume.json \
+install -D -m 0644 files/volume.json \
   "${ROOTFS_DIR}/usr/local/lib/eatabit/config/volume.json"
-install -D -m 0666 files/light.json \
+install -D -m 0644 files/light.json \
   "${ROOTFS_DIR}/usr/local/lib/eatabit/config/light.json"
 
 echo "Default config files installed to /usr/local/lib/eatabit/config/"
@@ -99,7 +102,7 @@ cat > "${ROOTFS_DIR}/etc/logrotate.d/eatabit-mqtt-client" << 'EOF'
   delaycompress
   missingok
   notifempty
-  create 0666 root root
+  create 0644 root root
 }
 EOF
 
