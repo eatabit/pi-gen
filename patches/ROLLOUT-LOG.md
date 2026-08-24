@@ -58,6 +58,8 @@ found all three healthy. **Applying a patch to them is not.**
 | `0000000042288e07` | `172144e4-aa9a-451e-be66-b98233f39be9` | v1.1.1 | hw/1.1 |
 | `0000000096a39148` | `1382dc9c-9abb-4b48-b0f7-61c6179de18b` | v1.1.1 | hw/1.1 |
 | `0000000092f7766c` | `512055fd-ae2e-41e3-bdbb-6b3665cfccf0` | v1.1.1 | hw/1.1 |
+| `00000000bd396b5c` | `583bd49e-87db-4892-94fe-ec3f19a368e6` | v1.1.1 | hw/1.1 |
+| `00000000edec02ad` | `34e4e3b1-7193-4c37-99f3-216289625363` | v1.1.0 | hw/1.1 |
 
 ### What was applied
 
@@ -84,6 +86,12 @@ found all three healthy. **Applying a patch to them is not.**
 | `92f7766c` | log2ram-timer-hourly-sync | `2026-08-24T16:19:22+00:00` | installed; **first sync NOT observed** |
 | `92f7766c` | ble-classic-scan-off | `2026-08-24T16:21:25+00:00` | `PSCAN ISCAN` → gone; self-check passed; mqtt-client untouched |
 | `92f7766c` | mqtt-keepalive-tolerance | `2026-08-24T16:22:03+00:00` | js `b009b68c`; DNS guard 5/5; PID 1532 → 3373 |
+| `bd396b5c` | ngrok-session-reclaim | `2026-08-24T17:46:00+01:00` | js `1d49a43a`, unit `84aa9272`; 3×3 cycles all 200 |
+| `bd396b5c` | gateway-timezone-utc | `2026-08-24T16:55:45+00:00` | MainPID 2276 unchanged |
+| `bd396b5c` | log2ram-timer-hourly-sync | `2026-08-24T16:55:50+00:00` | **first sync VERIFIED 17:00:07Z** — 73,138 B → 119 B |
+| `bd396b5c` | ble-classic-scan-off | `2026-08-24T16:56:34+00:00` | `PSCAN ISCAN` → gone; self-check passed |
+| `bd396b5c` | mqtt-keepalive-tolerance | `2026-08-24T16:57:15+00:00` | js `b009b68c`; reconnect took 58 s (degraded link) |
+| `edec02ad` | ngrok-session-reclaim | `2026-08-24T18:25:32+01:00` | js `1d49a43a`, unit `84aa9272`; needed a reboot first; **first v1.1.0 field device** |
 
 `96a39148` was **verified only, not patched** in this campaign — it already carries all
 seven patches (reclaim `2026-08-21T19:35:07+01:00`, keepalive `2026-08-23T17:31:37+00:00`).
@@ -108,6 +116,8 @@ README's own falsification criterion.
 | `c3343f47` | 28/70 | 248 | 53/127 (42%) | 14 | secondary |
 | `db996da7` | — | 49 | 19/24 (79%) | 6 | secondary |
 | `92f7766c` | 70/70 | 256 | 33/82 (40%) | 2 | weak — tiny floor |
+| `bd396b5c` | 53/70 | 220 | 45/61 (74%) | 6 | secondary |
+| `edec02ad` | **48/70** | 426 | 58/97 (60%) | 14 | secondary — worst link measured |
 | `a15e12da` | — | 5 | 0 short sessions | 0 | **useless — no cluster to thin** |
 
 Long sessions (≥16 min) fit at 4–16%, i.e. chance, so the modulo test discriminates
@@ -130,6 +140,7 @@ tolerance for latency and not loss:
 | `c3343f47` | 379,080 B | **2026-08-05** (19 days) | **not observed** ⚠ |
 | `42288e07` | 73,056 B | boot (14:58Z, same day) | **not observed** ⚠ |
 | `92f7766c` | 73,057 B | boot (16:02Z, same day) | **not observed** ⚠ |
+| `bd396b5c` | 73,138 B | **2026-04-21** (4 months — its own provisioning date) | **119 B ✅ verified 17:00:07Z** |
 
 Bench units (`cce04a18` v1.1.4, `ce4c5d90` v1.0.10, `03c45d6d` v1.1.0) audited
 2026-08-24: all three healthy — timer enabled+active, exactly one `TimersCalendar` entry,
@@ -153,6 +164,7 @@ uniform**, and on a noisy site it is not measurable at all.
 | `db996da7` | — | 7.799 ms | **1.424 ms** | 5.48× better; loss 1.67% → 0% |
 | `42288e07` | 65/70 | 6.521 ms | 8.582 ms | **inconclusive — noise exceeds the effect** |
 | `92f7766c` | 70/70 | 7.029 ms | 4.731 ms | 1.49× — **real but at the noise floor** |
+| `bd396b5c` | 53/70 | 64.754 ms | 41.033 ms | 1.58× — real, but **41 ms remains: 15× the BT-OFF reference** |
 
 On `42288e07` a within-run A/B (`measure.sh -a asis,classic`) put two arms of the **same**
 radio state at mdev 6.519 and 4.470 — a **1.46× run-to-run spread**, larger than the 1.32×
@@ -248,9 +260,31 @@ does not enforce that stated exclusion, and in practice v1.1.1 devices are in sc
    `applied` marker and `/run/eatabit` — not the js sha alone. The `BUG-049` fleet survey
    row saying `WOULD APPLY` is a 2026-08-20 snapshot taken one day before it was patched.
 
+16. **BUG-035 is NOT fixed — a credential is minted per `startNgrokTunnel` ATTEMPT, including
+    ones the device never answers.** The ngrok account holds **31 credentials**; 30 were
+    created 2026-08-23/24 by this campaign, one per device touched (`edec02ad` 5,
+    `92f7766c` 5, `db996da7` 5, `42288e07` 4, `3e83bb41` 4, `bd396b5c` 3, `c3343f47` 2,
+    `a15e12da` 1, `96a39148` 1). **Decisive evidence:** credentials were minted at
+    `17:14:20Z`, `17:15:54Z` and `17:17:28Z` — exactly matching three
+    `$NO_RESPONSE_FROM_DEVICE` attempts on `edec02ad`. The Lambda mints the credential
+    *before* dispatching the command, so a device that never answers leaves an orphan with
+    no `stopNgrokTunnel` to reclaim it. Delete-on-stop only covers the success path.
+
+    **This produced a real failure**, not just clutter: a `startNgrokTunnel` on `edec02ad`
+    at `17:28:37Z` returned `500 ERR_NGROK_107` — *"The authtoken you specified is properly
+    formed, but it is invalid"* — distinct from the BUG-049 wedge (`Failed to establish
+    tunnel`), and it cleared on the next attempt without an `mqtt-client` restart, which
+    the wedge would not allow. BUG-035 is currently recorded as **closed**; this says
+    otherwise. **Not actioned:** deleting credentials is a production action on shared
+    infrastructure, and deleting one in use is a plausible way to *cause* ERR_NGROK_107.
+
+17. **A campaign inflates this fast.** ~30 credentials in two days of patching. Any
+    multi-device campaign should check `api.ngrok.com/credentials` before and after, and
+    budget for reclamation, or it will hit the account cap mid-run.
+
 ### Raised on excluded hardware — owned by another worker
 
-15. **`/usr/local/lib/eatabit/log` was NOT writable on bench unit `cce04a18`** (observed
+18. **`/usr/local/lib/eatabit/log` was NOT writable on bench unit `cce04a18`** (observed
     2026-08-24, read-only audit). `logrotate` fails with
     `error creating output file …/mqtt-client.log.1.gz: Read-only file system`, while `/` is
     mounted `rw,noatime`, `/tmp` is writable, `dmesg` shows no ext4/mmc I/O errors and the
@@ -268,17 +302,23 @@ does not enforce that stated exclusion, and in practice v1.1.1 devices are in sc
 10. **BUG-049 acceptance test** (run after every reclaim application): 3 × stop→start, all
     must return 200, and the ngrok API must show one agent session for N starts. Passed on
     `db996da7`, `a15e12da`, `42288e07`.
-11. **Session reclamation is not instantaneous — re-check before calling a leak.** On
+11. **Do NOT use the disk copy of `log2ram.log` as the "did it sync?" predicate.** It gave
+    a false NOT FIRED on `bd396b5c`: the disk copy's mtime is written during the sync, so
+    arming a watch after the sync has already run waits for a change that already happened.
+    Use `systemctl show log2ram-daily.service -p Result -p ExecMainStartTimestamp` plus the
+    tmpfs/disk byte gap — both were visible in the same output and both said it had fired.
+
+12. **Session reclamation is not instantaneous — re-check before calling a leak.** On
     `92f7766c` the ngrok API showed **3** sessions immediately after 4 starts + 3 stops,
     which looks like the BUG-049 leak. Thirty seconds later it was **1**, stable across
     three checks. Sample the session count ~30 s after the final stop, not immediately.
 
-12. **BUG-039 verified free of charge four times** — on any later restart, check that
+13. **BUG-039 verified free of charge four times** — on any later restart, check that
     `/run/eatabit/device-ready-printed` has an mtime *older* than
     `ExecMainStartTimestamp`. No test print required.
-13. **`mqtt-client.service: Failed with result 'timeout'`** appears in the journal on every
+14. **`mqtt-client.service: Failed with result 'timeout'`** appears in the journal on every
     restart across all devices. Benign: the old process exceeds its stop timeout while the
     new one starts clean.
-14. **Re-check idle immediately before a restart, not at recon time.** On `db996da7` a real
+15. **Re-check idle immediately before a restart, not at recon time.** On `db996da7` a real
     customer job printed 2 m 19 s before the restart while the idle reading in hand was
     38 minutes stale. Nothing was dropped, by luck.
