@@ -103,11 +103,29 @@ FORCE_DETACH=0
 # v1.0.11/v1.1.5 lands on exactly this sha and the patch no-ops (BUG-041 V8).
 FIXED_SHA="2ab148d15a6b96479c936b58443eeb971eb043528fe1502f6b15546c4efcee07"
 
-# /etc/log2ram.conf is ASSERTED, never modified. One accepted sha suffices:
-# stage3/05-install-log2ram/00-run.sh is byte-identical across all 15 eatabit release
-# tags (v1.0.1-v1.0.10, v1.1.0-v1.1.4), verified 2026-08-23 by hashing the file at
-# every tag -- a single distinct sha came back.
-ACCEPTED_CONF_SHAS=("244f4c5ad6d1231321685052f9016bbd5016a1848de6f46460afd17bfb1d0c46")
+# /etc/log2ram.conf is ASSERTED, never modified. TWO accepted shas:
+#
+#   244f4c5a...  the conf as shipped on all 15 release tags (v1.0.1-v1.0.10,
+#                v1.1.0-v1.1.4), verified 2026-08-23 by hashing the file at every tag --
+#                a single distinct sha came back. This is what every FIELD device has.
+#   7bfdcc52...  the conf after ISSUE-068 Phase 3, which removed four keys log2ram never
+#                read (LOG_DIRS, COMP, MAIL, ENABLED) and left only the two it does
+#                (SIZE, USE_RSYNC). Devices reflashed to a post-ISSUE-068 image carry this.
+#
+# THE SECOND ENTRY IS NOT OPTIONAL. This patch REFUSES on an unrecognised conf, so
+# without it every device running a post-ISSUE-068 image would be rejected by a patch
+# that is otherwise perfectly applicable to it -- the conf is only asserted here, never
+# modified, and neither key this patch depends on changed. Added in the same change that
+# altered the conf, exactly as ISSUE-068's acceptance criteria require.
+#
+# NOTE for whoever cuts v1.0.11 / v1.1.5: BUG-041's V8 byte-identity requirement -- that
+# the patched device match the next release byte for byte -- must be re-established
+# against the NEW conf, since the release will ship 7bfdcc52 rather than 244f4c5a. That
+# check cannot be completed until those tags exist.
+ACCEPTED_CONF_SHAS=(
+  "244f4c5ad6d1231321685052f9016bbd5016a1848de6f46460afd17bfb1d0c46"  # v1.0.1-v1.1.4 (all field devices today)
+  "7bfdcc52bda347f040e866a500803236810973580eb7eaf30313d1bbd814bfb9"  # post-ISSUE-068 image
+)
 
 KNOWN_VERSIONS=("1.0.1" "1.0.2" "1.0.3" "1.0.4" "1.0.5" "1.0.6" "1.0.7" \
                 "1.0.8" "1.0.9" "1.0.10" \
