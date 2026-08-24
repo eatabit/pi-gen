@@ -61,6 +61,7 @@ found all three healthy. **Applying a patch to them is not.**
 | `00000000bd396b5c` | `583bd49e-87db-4892-94fe-ec3f19a368e6` | v1.1.1 | hw/1.1 |
 | `00000000edec02ad` | `34e4e3b1-7193-4c37-99f3-216289625363` | v1.1.0 | hw/1.1 |
 | `0000000094300990` | `147e874c-b5dd-49ac-a8da-6c965804353c` | v1.1.1 | hw/1.1 |
+| `0000000019dffb8b` | `cac961b2-722d-4bf8-bb35-cbd0976bbbf6` | **v1.0.2** | hw/1.0 |
 
 ### What was applied
 
@@ -103,6 +104,11 @@ found all three healthy. **Applying a patch to them is not.**
 | `94300990` | log2ram-timer-hourly-sync | `2026-08-24T18:44:50+00:00` | **first sync VERIFIED 19:00:05Z** — 73,139 B → 119 B |
 | `94300990` | ble-classic-scan-off | `2026-08-24T18:45:20+00:00` | `PSCAN ISCAN` → gone; 2.45× mdev |
 | `94300990` | mqtt-keepalive-tolerance | `2026-08-24T18:46:01+00:00` | js `b009b68c`; DNS guard 5/5; PID 2274 → 3939 |
+| `19dffb8b` | ngrok-session-reclaim | `2026-08-24T20:31:12+01:00` | js `1d49a43a`, unit `84aa9272`; needed a reboot first; 3×3 cycles all 200 |
+| `19dffb8b` | gateway-timezone-utc | `2026-08-24T19:42:47+00:00` | MainPID 1494 unchanged |
+| `19dffb8b` | log2ram-timer-hourly-sync | `2026-08-24T19:42:53+00:00` | **first sync VERIFIED 20:00:03Z** — 73,144 B → 119 B |
+| `19dffb8b` | ble-classic-scan-off | `2026-08-24T19:43:25+00:00` | `PSCAN ISCAN` → gone; 1.74× mdev |
+| `19dffb8b` | mqtt-keepalive-tolerance | `2026-08-24T19:44:06+00:00` | js `b009b68c`; DNS guard 5/5; PID 1494 → 3232 |
 
 `96a39148` was **verified only, not patched** in this campaign — it already carries all
 seven patches (reclaim `2026-08-21T19:35:07+01:00`, keepalive `2026-08-23T17:31:37+00:00`).
@@ -130,6 +136,7 @@ README's own falsification criterion.
 | `bd396b5c` | 53/70 | 220 | 45/61 (74%) | 6 | secondary |
 | `edec02ad` | **48/70** | 426 | 58/97 (60%) | 14 | secondary — worst link measured |
 | `94300990` | 57/70 | 113 | 9/10 (90%) | 1 | weak — only 10 short sessions |
+| `19dffb8b` | **70/70** | 369 | 37/43 (**86%**) | **23** | **SECONDARY** — cleanest signal: perfect link, so almost no loss |
 | `a15e12da` | — | 5 | 0 short sessions | 0 | **useless — no cluster to thin** |
 
 Long sessions (≥16 min) fit at 4–16%, i.e. chance, so the modulo test discriminates
@@ -155,6 +162,7 @@ tolerance for latency and not loss:
 | `bd396b5c` | 73,138 B | **2026-04-21** (4 months — its own provisioning date) | **119 B ✅ verified 17:00:07Z** |
 | `edec02ad` | 73,058 B | same day | **119 B ✅ verified 18:00:03Z** |
 | `94300990` | 73,139 B | same day | **119 B ✅ verified 19:00:05Z** |
+| `19dffb8b` | 73,144 B | same day | **119 B ✅ verified 20:00:03Z** |
 
 Bench units (`cce04a18` v1.1.4, `ce4c5d90` v1.0.10, `03c45d6d` v1.1.0) audited
 2026-08-24: all three healthy — timer enabled+active, exactly one `TimersCalendar` entry,
@@ -181,6 +189,7 @@ uniform**, and on a noisy site it is not measurable at all.
 | `bd396b5c` | 53/70 | 64.754 ms | 41.033 ms | 1.58× — real, but **41 ms remains: 15× the BT-OFF reference** |
 | `edec02ad` | **48/70** | 53.959 ms | **9.920 ms** | **5.44×** — worst link, biggest gain |
 | `94300990` | 57/70 | 13.249 ms | 5.398 ms | 2.45× — moderate, ~60% of jitter was BR/EDR |
+| `19dffb8b` | **70/70** | 10.659 ms | 6.132 ms | 1.74× — post-fix avg 3.845 ms, near the BT-OFF reference |
 
 On `42288e07` a within-run A/B (`measure.sh -a asis,classic`) put two arms of the **same**
 radio state at mdev 6.519 and 4.470 — a **1.46× run-to-run spread**, larger than the 1.32×
@@ -189,12 +198,24 @@ regression. Its readings sit between the ISSUE-064 references (BT ON 22.363 ms, 
 2.668 ms) and nearer the OFF end, i.e. this site was never paying the severe BR/EDR
 penalty `db996da7` was.
 
-**The effect does NOT track link quality — do not predict it from the link.** `edec02ad`
-has the worst link measured (48/70) and showed the *largest* gain (5.44×), while
-`bd396b5c` (53/70) showed only 1.58× and `92f7766c` (70/70) only 1.49×. What separates
-them is whether BR/EDR is the **dominant** jitter source: on `edec02ad` mdev collapsed to
-9.9 ms, so it was; on `bd396b5c` 41 ms of network jitter remained, so it was not. The
-within-run A/B is the only way to know in advance — measure, do not assume.
+**The effect does NOT track link quality — do not predict it from the link.** Six devices
+measured, and the gain and the link are essentially uncorrelated:
+
+| device | link | mdev gain |
+|---|---|---|
+| `edec02ad` | 48/70 (worst) | **5.44×** (largest) |
+| `db996da7` | — | 5.48× |
+| `94300990` | 57/70 | 2.45× |
+| `19dffb8b` | 70/70 (perfect) | 1.74× |
+| `bd396b5c` | 53/70 | 1.58× |
+| `92f7766c` | 70/70 (perfect) | 1.49× |
+
+What separates them is whether BR/EDR is the **dominant** jitter source. On `edec02ad`
+mdev collapsed to 9.9 ms, so it was; on `bd396b5c` 41 ms of network jitter remained, so it
+was not. A perfect link can show a small gain (`19dffb8b`, `92f7766c`) simply because there
+was little jitter to remove — its post-fix avg of 3.845 ms sits at the ISSUE-064 BT-OFF
+reference of 3.223 ms, i.e. near-optimal. The within-run A/B is the only way to know in
+advance — measure, do not assume.
 
 `92f7766c` was measured the right way round: a within-run `-a asis,classic` A/B **before**
 patching, which both quantified the effect (1.49×) and predicted it would be modest —
@@ -255,7 +276,7 @@ does not enforce that stated exclusion, and in practice v1.1.1 devices are in sc
    watchdog fires** — same signature, and it needed a reboot on 2026-08-24 to clear a
    wedged tunnel. Until BUG-057 ships, any `mqtt-client` restart on either device is safe
    only while DNS resolves; use a pre-restart DNS guard (5 resolves, abort on any failure).
-5. **`ISSUE-068` reproduced on every device seen** — `logrotate` fails with
+5. **(SUPERSEDED — ISSUE-068 shipped a better fix; see 18.)** **`ISSUE-068` reproduced on every device seen** — `logrotate` fails with
    `result=exit-code` because `/usr/local/lib/eatabit/log` is mode `0777`. Image source
    sets it twice (`stage3/01-create-eatabit-lib/00-run.sh:21` uses `chmod 0777`,
    `stage3/05-install-log2ram/00-run.sh:80` uses `chmod 777`), so a permissions-only fix is
@@ -311,7 +332,9 @@ does not enforce that stated exclusion, and in practice v1.1.1 devices are in sc
     otherwise. **Not actioned:** deleting credentials is a production action on shared
     infrastructure, and deleting one in use is a plausible way to *cause* ERR_NGROK_107.
 
-17. **A campaign inflates this fast.** ~30 credentials in two days of patching. Any
+17. **A campaign inflates this fast, and it is still climbing.** 31 → 29 → 33 → **37**
+    credentials over this campaign (the dip shows some reclamation does occur, just slower
+    than a campaign creates them). ~30 in two days of patching. Any
     multi-device campaign should check `api.ngrok.com/credentials` before and after, and
     budget for reclamation, or it will hit the account cap mid-run.
 
@@ -343,20 +366,79 @@ does not enforce that stated exclusion, and in practice v1.1.1 devices are in sc
     watchdog patch made both applicable. Note the reclaim patch went **directly** from
     `e80b7a17` — `2026-06-30` was never needed, since the rollup accepts that sha itself.
 
+21. **Marker absence does NOT prove a patch was not applied.** On `19dffb8b` the
+    `2026-06-30-offline-reboot-and-expired-job` **marker file is missing**, yet the patch is
+    plainly applied: its state directory exists with a `mqtt-client.js` backup, and the js
+    sits at `2f8848db`. Same on `3e83bb41`, whose two patch directories had backups and no
+    markers — an older patch generation that did not write them. **Marker present ⇒
+    applied. Marker absent ⇒ inconclusive**; check the state directory, its `backup/`, and
+    the sha. Corrects an earlier claim in this log that "the marker is authoritative" — it
+    is authoritative only in the positive direction.
+
+    Related trap in my own tooling: `cat "$D/applied" | tr '\n' ' ' || echo ABSENT` never
+    prints ABSENT, because the `||` binds to `tr`, which succeeds on empty input. Use
+    `[ -f "$D/applied" ]`.
+
+22. **A v1.0.2 device carrying `2f8848db` proves the 2026-06-30 patch was applied**, with no
+    device access required. Stock v1.0.2/v1.0.3/v1.0.7 all ship `177e10b8`; the only patch
+    installing `2f8848db` as a payload is `2026-06-30`; the watchdog patch ships no js
+    payload and its in-place edit yields `e80b7a17` (measured). `2f8848db` is also stock
+    v1.0.10/v1.1.4 — so this inference works **only** on devices whose own release predates
+    that generation. Confirmed on `19dffb8b` once reachable: both patch directories present.
+
+23. **Three new ISSUE-068 patches landed mid-campaign** (both lines; `hw/1.1` `6cfcc1a`,
+    `hw/1.0` `9e2b34d`): `2026-08-23-log-permissions-and-rotation`,
+    `2026-08-23-app-permissions-and-shadow-churn`, `2026-08-24-ble-config-permissions`.
+
+    **Sequencing constraint that affects this campaign:**
+    `2026-08-24-ble-config-permissions` restarts `ble-config.service`, and so does
+    `2026-08-20-ble-classic-scan-off`, **which then scans its own journal to verify**. Run
+    concurrently, that scan sees restart noise it did not cause. They share no file — run
+    them **back to back**, never together. No device patched in this campaign carried
+    `ble-config-permissions`, so no BLE self-check here was contaminated.
+
+    **Reach differs and constrains ordering:** log-permissions restarts nothing and reaches
+    every release; ble-config-permissions covers all 15; **app-permissions-and-shadow-churn
+    reaches only v1.0.8–v1.0.10 / v1.1.2–v1.1.4**, because the `mqtt-client` lineage entry
+    point accepts nothing else — v1.0.1–v1.0.7, v1.1.0 and v1.1.1 can never take it. That
+    excludes most devices in this campaign.
+
+    The three bench units already carry these patches, so anything sampling `.80`/`.121`/
+    `.126` is skewed.
+
 ### Raised on excluded hardware — owned by another worker
 
-18. **`/usr/local/lib/eatabit/log` was NOT writable on bench unit `cce04a18`** (observed
-    2026-08-24, read-only audit). `logrotate` fails with
-    `error creating output file …/mqtt-client.log.1.gz: Read-only file system`, while `/` is
-    mounted `rw,noatime`, `/tmp` is writable, `dmesg` shows no ext4/mmc I/O errors and the
-    path is not a separate mount — so **not** SD-card failure or a read-only root. Most
-    likely a systemd sandboxing property (`ProtectSystem` / `ReadWritePaths`) introduced by
-    one of the two uncommitted `2026-08-23-*` patches on that unit. Matters because
-    `mqtt-client.log` is the only log that survives a power cycle (`/var/log` is tmpfs), so
-    this would be a serious regression if it reached the fleet. **Not investigated further
-    and not actioned** — that device's state belongs to another worker. Their patch also
-    *did* fix the ISSUE-068 `0777` problem (dir now `drwxr-xr-x`, stanza `create 0644 root
-    root`, rotation produced `mqtt-client.log.1`), so the two findings are related.
+18. **~~`/usr/local/lib/eatabit/log` was NOT writable on `cce04a18`~~ — RETRACTED
+    2026-08-24. The finding was wrong: the behaviour it describes is ISSUE-068's fix working
+    correctly.** Kept rather than deleted, because it was merged to `hw/1.1` and another
+    session may have read it.
+
+    *What I claimed:* the log directory was unwritable, probably a systemd sandboxing
+    regression (`ProtectSystem` / `ReadWritePaths`) from an uncommitted `2026-08-23-*`
+    patch, and serious because `mqtt-client.log` is the only log surviving a power cycle.
+
+    *Three independent errors:*
+    - **Tested as the wrong user.** I ran `touch` as `eatabit` against a `root`-owned `0755`
+      directory. Failure is the expected result. Every writer runs as root —
+      `2026-08-23-log-permissions-and-rotation` states this explicitly, and it is precisely
+      why `0755` is safe.
+    - **Discarded the error.** `touch … 2>/dev/null` left me unable to distinguish `EACCES`
+      (normal) from `EROFS` (alarming). I assumed the alarming one.
+    - **Cited evidence predating the change.** The logrotate error I quoted is timestamped
+      `00:39:52`; that patch's marker reads `03:29:43` — about three hours later.
+
+    *What was actually happening:* ISSUE-068 had narrowed
+    `/usr/local/lib/eatabit/{log,config,reset}` from `0777` to `0755` — the fix for the very
+    defect finding 5 reports. Neither `2026-08-23-app-permissions-and-shadow-churn` nor
+    `2026-08-24-ble-config-permissions` contains `ProtectSystem` or `ReadWritePaths`;
+    verified by grep against `hw/1.1`.
+
+    **Their approach also beats the `su root root` in finding 5:** *"the mode is the cause,
+    so 0755 fixes the class and covers every future file in the directory; `su` fixes one
+    stanza and leaves the world-writable directory standing."* And
+    `2026-08-24-ble-config-permissions` stops `ble-config.js` re-creating them at `0777` —
+    exactly the "two chmod sites" objection I raised against a permissions-only fix.
+    **Finding 5 should be read as superseded by ISSUE-068's shipped patches.**
 
 ### Operational notes
 
