@@ -23,8 +23,7 @@ applications **re-creating** them wide open. **Neither is sufficient alone** —
 this patch, one service start against an absent directory silently undoes the companion
 and rotation breaks again.
 
-**14 sites:** 8 in `mqtt-client.js`, 6 in `ble-config.js` (`0o777`→`0o755`,
-`0o666`→`0o644`).
+**8 sites** in `mqtt-client.js`. The six in `ble-config.js` are handled by its own patch.
 
 ### 2 · Shadow snapshot churn — fixed by moving the files to tmpfs
 
@@ -79,63 +78,20 @@ source of truth"*. Installing this payload therefore **reverts nothing**: it is 
 file plus the ISSUE-068 changes. Verified by comparing the deployed sha against
 `git show <ref>:stage3/03-install-mqtt-client/files/mqtt-client.js`.
 
-### `ble-config.js` has FIVE variants — one payload each
+### `ble-config.js` is NOT in this patch
 
-Enumerated across all 15 release tags (2026-08-24):
+It has its own — [`2026-08-24-ble-config-permissions`](../2026-08-24-ble-config-permissions/) —
+and the split is deliberate.
 
-| Prior sha | Releases | Payload |
-|---|---|---|
-| `eac92d78…` | v1.0.1, v1.0.2 | `ble-config-eac92d78.js` |
-| `4654037f…` | v1.0.3 | `ble-config-4654037f.js` |
-| `d70edf02…` | v1.0.4–v1.0.6, **v1.1.0** | `ble-config-d70edf02.js` |
-| `ecbf9a06…` | v1.0.7, v1.0.8, **v1.1.1, v1.1.2** | `ble-config-ecbf9a06.js` |
-| `2cda3a88…` | v1.0.9, **v1.0.10, v1.1.3, v1.1.4** | `ble-config-2cda3a88.js` |
+This patch requires the `mqtt-client` lineage head, and that lineage's entry point
+(`2026-08-20-ngrok-session-reclaim`) accepts only stock v1.0.8-v1.0.10 / v1.1.2-v1.1.4. So
+a device on **v1.0.1-v1.0.7, v1.1.0 or v1.1.1 cannot enter the lineage at all** and can
+never take this patch. While the two fixes were welded together, that dead end governed
+the `ble-config.js` fix as well - even though that change needs no lineage and applies to
+every released variant. Split, each reaches as far as it actually can.
 
-> **The split is by release history, not by hardware line.** v1.1.0 shares a variant with
-> v1.0.4–v1.0.6; v1.0.10 shares one with v1.1.3/v1.1.4. So the gate keys on the **observed
-> sha** — never the version string, never the branch. Two devices on the same line can
-> need different payloads, and two on different lines can need the same one.
-
-Each payload is **that variant's own file** with only the six permissive-mode literals
-narrowed (3× `0o777`→`0o755`, 3× `0o666`→`0o644` — identical in all five). So no device
-receives unrelated changes from another release: a v1.0.3 device gets v1.0.3's file fixed,
-not v1.1.4's.
-
-Only the `2cda3a88` payload equals the current image source; the other four converge on
-"that release plus this fix", which is correct for those devices and deliberately not the
-same bytes.
-
-**No field patch has ever modified `ble-config.js`** — this is the first — so a device's
-deployed sha always equals its image's, and these five are exhaustive for any released
-image. An unrecognised sha is refused and printed rather than guessed at.
-
-## Ordering
-
-- **Lineage `mqtt-client`** — shares `/usr/local/lib/eatabit/bin/mqtt-client.js` with
-  `2026-08-19-mqtt-keepalive-tolerance`, whose output is this patch's accepted prior.
-- **Lineage `ble-config`** — new; no other patch ships `ble-config.js`.
-- **Independent of its companion** `2026-08-23-log-permissions-and-rotation`: that one
-  touches directory modes and `/etc/logrotate.d`, this one touches
-  `/usr/local/lib/eatabit/bin`. No shared file, no shared checksum, either order.
-
-## Usage
-
-```bash
-scp -r patches/2026-08-23-app-permissions-and-shadow-churn eatabit@<device>:~/
-ssh eatabit@<device>
-./2026-08-23-app-permissions-and-shadow-churn/apply.sh --check   # no root, changes nothing
-sudo ./2026-08-23-app-permissions-and-shadow-churn/apply.sh
-```
-
-`--check` exit codes: **0** already patched · **1** would refuse · **2** would apply.
-
-Over SSH the restart+verify runs **detached**, so `sudo ./apply.sh` returns almost
-immediately and the work continues without you. Reconnect and read
-`/usr/local/lib/eatabit/patches/2026-08-23-app-permissions-and-shadow-churn/apply.log`.
-
-```bash
-sudo ./2026-08-23-app-permissions-and-shadow-churn/apply.sh --rollback
-```
+**Apply both** (plus `2026-08-23-log-permissions-and-rotation`) to close ISSUE-068 on a
+device. All three share no files and may go in any order.
 
 ## Prerequisite — `2026-08-19-mqtt-keepalive-tolerance`
 

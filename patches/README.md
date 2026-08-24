@@ -29,7 +29,7 @@ planning a campaign; the directory listing on its own will mislead you.
 | **`timezone`** | `/etc/timezone`, `/etc/localtime` (symlink) | 1. [`2026-08-19-gateway-timezone-utc`](./2026-08-19-gateway-timezone-utc/) — **independent** |
 | **`log2ram`** | `/etc/systemd/system/log2ram-daily.timer.d/hourly.conf`, `/etc/log2ram.conf` | 1. [`2026-08-19-log2ram-timer-hourly-sync`](./2026-08-19-log2ram-timer-hourly-sync/) — **independent** |
 | **`log-permissions`** | `/usr/local/lib/eatabit/{log,config,reset}` (directory modes), `/etc/logrotate.d/eatabit-mqtt-client`, `/etc/logrotate.d/eatabit-ble-config` | 1. [`2026-08-23-log-permissions-and-rotation`](./2026-08-23-log-permissions-and-rotation/) — **independent** |
-| **`ble-config`** | `/usr/local/lib/eatabit/bin/ble-config.js` | 1. [`2026-08-23-app-permissions-and-shadow-churn`](./2026-08-23-app-permissions-and-shadow-churn/) — **independent** |
+| **`ble-config`** | `/usr/local/lib/eatabit/bin/ble-config.js` | 1. [`2026-08-24-ble-config-permissions`](./2026-08-24-ble-config-permissions/) — **independent** |
 
 **`2026-08-19-gateway-timezone-utc` targets files no other patch touches** — it replaces
 no file at all, gating instead on the deployed timezone state — so it is independent of
@@ -42,21 +42,24 @@ shares no checksum with any of them and may be applied at any point in a campaig
 timezone patch it **replaces no file** — it enables a unit and adds a drop-in — so it gates
 on observed state rather than a replaced-file sha, and it **restarts nothing**.
 
-**The two `2026-08-23` patches are ISSUE-068's two halves, and they share no file.**
-`-log-permissions-and-rotation` touches directory modes and `/etc/logrotate.d`;
-`-app-permissions-and-shadow-churn` touches `/usr/local/lib/eatabit/bin`. So they are
-independent of **each other** and may be applied in either order — but **applying both is
-what actually closes ISSUE-068 on a device.** The rotation patch narrows the directories
-that exist now; the app patch stops the applications re-creating them `0o777`. Without the
-app patch, one service start against an absent directory silently undoes the other.
-Only the app patch restarts services.
+**ISSUE-068 ships THREE patches, and they share no file with one another**, so they may be
+applied in any order — but **all three are needed** to close it on a device:
 
-**`2026-08-23-app-permissions-and-shadow-churn` sits in the `mqtt-client` lineage** and
-accepts that lineage's head (`b009b68c…`) as its prior. Worth knowing: that head is
-**byte-identical to the pre-ISSUE-068 image source**, because every patch here is also
-committed to the image — so its payload being the image source reverts nothing. It also
-opens the new `ble-config` lineage, and ships **two** `ble-config.js` payloads because
-v1.1.0 carries a different file from v1.0.10/v1.1.4; it selects by observed sha.
+| Patch | Fixes | Restarts | Reach |
+|---|---|---|---|
+| `2026-08-23-log-permissions-and-rotation` | directory modes + both logrotate stanzas | **nothing** | every released version |
+| `2026-08-24-ble-config-permissions` | `ble-config.js`'s six mode literals | `ble-config.service` only | every released variant |
+| `2026-08-23-app-permissions-and-shadow-churn` | `mqtt-client.js` modes + shadow snapshots to tmpfs | `mqtt-client.service` | **only devices that can enter the `mqtt-client` lineage** |
+
+The first narrows the directories that exist *now*; the other two stop the applications
+re-creating them `0o777`. Without the application patches, one service start against an
+absent directory silently undoes the first.
+
+**That last row is the one to plan around.** The `mqtt-client` lineage entry point accepts
+only stock v1.0.8–v1.0.10 / v1.1.2–v1.1.4, so a device on v1.0.1–v1.0.7, v1.1.0 or v1.1.1
+cannot enter the lineage and cannot take that patch. The other two have no such limit.
+`ble-config.js` was split out of it for exactly this reason — welded together, that dead
+end governed a fix that needs no lineage at all.
 
 **`2026-08-23-log-permissions-and-rotation` opens a new lineage of its own.** It targets
 three directory *modes* and the two `/etc/logrotate.d/eatabit-*` files. **No other patch
