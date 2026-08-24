@@ -80,6 +80,10 @@ found all three healthy. **Applying a patch to them is not.**
 | `42288e07` | log2ram-timer-hourly-sync | `2026-08-24T15:23:45+00:00` | installed; **first sync NOT observed** |
 | `42288e07` | ble-classic-scan-off | `2026-08-24T15:25:45+00:00` | `PSCAN ISCAN` → gone; self-check passed; mqtt-client untouched |
 | `92f7766c` | ngrok-session-reclaim | `2026-08-24T17:07:07+01:00` | js `1d49a43a`, unit `84aa9272`; 3×3 cycles all 200; needed a reboot first |
+| `92f7766c` | gateway-timezone-utc | `2026-08-24T16:19:16+00:00` | MainPID 1532 unchanged; 3-way agreement |
+| `92f7766c` | log2ram-timer-hourly-sync | `2026-08-24T16:19:22+00:00` | installed; **first sync NOT observed** |
+| `92f7766c` | ble-classic-scan-off | `2026-08-24T16:21:25+00:00` | `PSCAN ISCAN` → gone; self-check passed; mqtt-client untouched |
+| `92f7766c` | mqtt-keepalive-tolerance | `2026-08-24T16:22:03+00:00` | js `b009b68c`; DNS guard 5/5; PID 1532 → 3373 |
 
 `96a39148` was **verified only, not patched** in this campaign — it already carries all
 seven patches (reclaim `2026-08-21T19:35:07+01:00`, keepalive `2026-08-23T17:31:37+00:00`).
@@ -124,6 +128,8 @@ tolerance for latency and not loss:
 | `db996da7` | 73,137 B | boot (22:34:14Z, same day) | 118 B ✅ |
 | `a15e12da` | 378,680 B | **2026-07-28** (27 days) | 128 B ✅ |
 | `c3343f47` | 379,080 B | **2026-08-05** (19 days) | **not observed** ⚠ |
+| `42288e07` | 73,056 B | boot (14:58Z, same day) | **not observed** ⚠ |
+| `92f7766c` | 73,057 B | boot (16:02Z, same day) | **not observed** ⚠ |
 
 Bench units (`cce04a18` v1.1.4, `ce4c5d90` v1.0.10, `03c45d6d` v1.1.0) audited
 2026-08-24: all three healthy — timer enabled+active, exactly one `TimersCalendar` entry,
@@ -146,6 +152,7 @@ uniform**, and on a noisy site it is not measurable at all.
 |---|---|---|---|---|
 | `db996da7` | — | 7.799 ms | **1.424 ms** | 5.48× better; loss 1.67% → 0% |
 | `42288e07` | 65/70 | 6.521 ms | 8.582 ms | **inconclusive — noise exceeds the effect** |
+| `92f7766c` | 70/70 | 7.029 ms | 4.731 ms | 1.49× — **real but at the noise floor** |
 
 On `42288e07` a within-run A/B (`measure.sh -a asis,classic`) put two arms of the **same**
 radio state at mdev 6.519 and 4.470 — a **1.46× run-to-run spread**, larger than the 1.32×
@@ -153,6 +160,11 @@ radio state at mdev 6.519 and 4.470 — a **1.46× run-to-run spread**, larger t
 regression. Its readings sit between the ISSUE-064 references (BT ON 22.363 ms, BT OFF
 2.668 ms) and nearer the OFF end, i.e. this site was never paying the severe BR/EDR
 penalty `db996da7` was.
+
+`92f7766c` was measured the right way round: a within-run `-a asis,classic` A/B **before**
+patching, which both quantified the effect (1.49×) and predicted it would be modest —
+rather than discovering that afterwards and having to separate noise from signal. Do this
+on every device from now on.
 
 **Method note:** a single 60-packet arm cannot resolve a sub-2× difference on a congested
 2.4 GHz network. Use `measure.sh -a asis,classic` (within-run, same conditions) rather than
@@ -191,10 +203,11 @@ does not enforce that stated exclusion, and in practice v1.1.1 devices are in sc
    **thin**, or merely relocate to ~40 s? Reminder set for 2026-08-25T12:30Z
    (`trig_011Rc5GaKdwabyAoSP11GCvy`) — **still names c3343f47/db996da7 as primary and
    should be updated to lead with `42288e07`.**
-2. **Confirm the first log2ram sync on `c3343f47` and `42288e07`.** Tunnel was closed before 13:00Z.
+2. **Confirm the first log2ram sync on `c3343f47`, `42288e07` and `92f7766c`.** Tunnel was closed before 13:00Z.
    `stat -c%y /var/hdd.log/log2ram.log` should read 2026-08-24 13:00+, not 2026-08-05.
 3. **Patches still missing per device:**
    - `3e83bb41` — keepalive, log2ram, ble-classic-scan-off (only timezone applied)
+   - `92f7766c` — **complete** (6 patches) as of 2026-08-24T16:22Z
    - `cce04a18` (bench) — gateway-timezone-utc; still `Europe/London`, so its hourly
      log2ram schedule skips one slot at the spring DST transition
 
@@ -215,7 +228,9 @@ does not enforce that stated exclusion, and in practice v1.1.1 devices are in sc
    **The set is not fixed — it varies per device** by which windows have lapsed:
    `db996da7`/`a15e12da`/`3e83bb41` fired `logrotate`+`dpkg-db-backup`+`e2scrub_all`+
    `apt-daily-upgrade`; `c3343f47` added `apt-daily` (five); `42288e07` fired
-   `dpkg-db-backup`+`apt-daily-upgrade`+`e2scrub_all`+**`fstrim`** and **not `logrotate`**.
+   `dpkg-db-backup`+`apt-daily-upgrade`+`e2scrub_all`+**`fstrim`** and **not `logrotate`**;
+   `92f7766c` fired only **three** — `dpkg-db-backup`+`apt-daily-upgrade`+`e2scrub_all`.
+   Four devices, three distinct sets.
    Do not plan around a specific four. `apt-daily-upgrade` **can install packages** — check
    `apt-get -s upgrade` first (it read `0 upgraded` on every device here, and nothing was
    ever installed). On `c3343f47` (28/70 link) the ngrok tunnel dropped seconds after that
