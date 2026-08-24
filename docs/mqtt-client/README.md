@@ -113,10 +113,7 @@ Logs are rotated daily, keeping 7 days of compressed history.
 ├── config/                      # Read-write (shared with BLE service)
 │   ├── cutter-type.json        # Printer cutter setting
 │   ├── volume.json             # Speaker volume setting
-│   ├── light.json              # Light on/off setting
-│   ├── shadow-public.json      # Persisted public shadow state
-│   ├── shadow-private.json     # Persisted private shadow state
-│   └── shadow-health.json      # Persisted health shadow state
+│   └── light.json              # Light on/off setting
 ├── escpos/
 │   └── deviceReady.escpos      # Pre-compiled ESC/POS receipt for "device ready"
 ├── log/
@@ -127,6 +124,25 @@ Logs are rotated daily, keeping 7 days of compressed history.
 ├── version                      # OS image version string
 └── health.json                  # Health metrics (written by external health script)
 ```
+
+Some state is deliberately **not** on the SD card. `/run/eatabit` is a tmpfs directory
+systemd creates for this unit (`RuntimeDirectory=eatabit`,
+`RuntimeDirectoryPreserve=restart`), so its contents survive a service restart and are
+discarded on stop:
+
+```
+/run/eatabit/
+├── device-ready-printed        # Guard flag: the "device ready" receipt prints once per boot
+├── shadow-public.json          # Snapshot of last reported public shadow state
+├── shadow-private.json         # Snapshot of last reported private shadow state
+└── shadow-health.json          # Snapshot of last reported health shadow state
+```
+
+The shadow snapshots are **write-only debugging artefacts** — nothing reads them back.
+The authoritative shadow lives in AWS IoT Core. They were moved here from `config/` by
+ISSUE-068: that directory is not RAM-buffered, so rewriting `shadow-health.json` every
+15 minutes cost ~159 KiB/day of SD-card writes for state nothing consumed. Losing them
+on reboot is harmless — each is rewritten within one heartbeat.
 
 ---
 

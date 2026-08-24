@@ -77,7 +77,10 @@ systemctl enable log2ram-daily.timer
 # Create eatabit log directory if needed
 echo "Ensuring eatabit log directory exists..."
 mkdir -p /usr/local/lib/eatabit/log
-chmod 777 /usr/local/lib/eatabit/log
+# ISSUE-068: 0755, not 0777 -- see stage3/01-create-eatabit-lib/00-run.sh. A
+# world-writable parent makes logrotate skip every file in it, which is why
+# mqtt-client.log had never once been rotated on any release of either line.
+chmod 0755 /usr/local/lib/eatabit/log
 
 echo "log2ram installation and configuration complete!"
 EOF
