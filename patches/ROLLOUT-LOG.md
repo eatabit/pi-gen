@@ -19,6 +19,32 @@ version string implied. See *Checksum gate, not version* below.
 
 ---
 
+## EXCLUDED — local test bench devices. Do not patch.
+
+These three are the **local test bench** on the 192.168.1.0/24 LAN. They are **out of scope
+for field rollouts** and must not be patched as part of one. They are the validation
+hardware and are frequently mid-experiment with uncommitted patches.
+
+| IP | Device | FW |
+|---|---|---|
+| `192.168.1.80` | `00000000ce4c5d90` | v1.0.10 |
+| `192.168.1.121` | `00000000cce04a18` | v1.1.4 |
+| `192.168.1.126` | `0000000003c45d6d` | v1.1.0 |
+
+Read-only audits of these are fine — the log2ram health check on 2026-08-24 was one, and
+found all three healthy. **Applying a patch to them is not.**
+
+> **This was tested the hard way on 2026-08-24.** A rollout request named `cce04a18`; it is
+> a bench unit. Nothing was applied — the reclaim patch was already present (marker
+> `2026-08-20T20:24:33+01:00`) and `--check` returned **exit 1 `WOULD REFUSE`** because its
+> `js` had since moved to an unrecognised `7ecbf0ea…`. The cause: two patches installed
+> that **are not in this repo** —
+> `2026-08-23-log-permissions-and-rotation` and
+> `2026-08-23-app-permissions-and-shadow-churn` — the latter mid apply/rollback/apply cycle
+> **16 minutes before** the session connected. Another worker owned that device's state.
+
+---
+
 ## Campaign 2026-08-23 → 2026-08-24
 
 ### Devices
@@ -203,6 +229,21 @@ does not enforce that stated exclusion, and in practice v1.1.1 devices are in sc
    patch's `1d49a43a`, because keepalive superseded that js. Verify via the unit sha, the
    `applied` marker and `/run/eatabit` — not the js sha alone. The `BUG-049` fleet survey
    row saying `WOULD APPLY` is a 2026-08-20 snapshot taken one day before it was patched.
+
+### Raised on excluded hardware — owned by another worker
+
+14. **`/usr/local/lib/eatabit/log` was NOT writable on bench unit `cce04a18`** (observed
+    2026-08-24, read-only audit). `logrotate` fails with
+    `error creating output file …/mqtt-client.log.1.gz: Read-only file system`, while `/` is
+    mounted `rw,noatime`, `/tmp` is writable, `dmesg` shows no ext4/mmc I/O errors and the
+    path is not a separate mount — so **not** SD-card failure or a read-only root. Most
+    likely a systemd sandboxing property (`ProtectSystem` / `ReadWritePaths`) introduced by
+    one of the two uncommitted `2026-08-23-*` patches on that unit. Matters because
+    `mqtt-client.log` is the only log that survives a power cycle (`/var/log` is tmpfs), so
+    this would be a serious regression if it reached the fleet. **Not investigated further
+    and not actioned** — that device's state belongs to another worker. Their patch also
+    *did* fix the ISSUE-068 `0777` problem (dir now `drwxr-xr-x`, stanza `create 0644 root
+    root`, rotation produced `mqtt-client.log.1`), so the two findings are related.
 
 ### Operational notes
 
