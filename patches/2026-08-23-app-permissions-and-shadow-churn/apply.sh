@@ -19,23 +19,35 @@
 #     the companion patch and rotation breaks again. 14 sites: 8 in mqtt-client.js,
 #     6 in ble-config.js.
 #
-#  2. shadow-health.json REWRITE CHURN. persistShadowToFile() rewrote the whole file
-#     on every call and the health shadow fires every 15 minutes -- 96 whole-file
-#     rewrites a day, ~159 KiB/day straight to the SD card (that directory is NOT
-#     RAM-buffered; log2ram only ever managed /var/log), roughly 7x the write volume of
-#     the entire log directory. The state is almost always identical between cycles; it
-#     was the embedded `timestamp` that made every serialisation differ, so a naive
-#     content-equality check would never have skipped anything. The fix compares the
-#     `state` object ONLY, via a canonical sorted-key encoding so key ordering cannot
-#     produce a false match, and consults the on-disk file once after start-up so a
-#     restart does not force a redundant write either.
+#  2. shadow-*.json REWRITE CHURN -- fixed by MOVING THE FILES TO tmpfs.
+#     persistShadowToFile() rewrote the whole file on every call into
+#     /usr/local/lib/eatabit/config, which is NOT RAM-buffered (log2ram only ever
+#     managed /var/log). The health shadow fires every 15 minutes: 96 whole-file
+#     rewrites a day, ~159 KiB/day straight to the SD card, roughly 7x the write volume
+#     of the entire log directory.
 #
-#     CONSEQUENCE, recorded because it is a semantic change and not merely an
-#     optimisation: `timestamp` now means LAST CHANGE, not last check. That is safe for
-#     liveness -- the file is write-only (nothing in the image or on a device reads it
-#     back) and the 15-minute MQTT publish to AWS IoT Core is untouched, so cloud-side
-#     freshness is unaffected. The per-cycle heartbeat also remains visible in
-#     mqtt-client.log.
+#     THE FIX IS THE LOCATION. The files now live in /run/eatabit -- tmpfs. systemd
+#     already creates that directory for this unit (RuntimeDirectory=eatabit,
+#     RuntimeDirectoryPreserve=restart), so it survives a service restart and is
+#     discarded on stop. That is the correct lifetime: these files are WRITE-ONLY.
+#     Nothing in the image or on a device reads them back -- the authoritative shadow
+#     lives in AWS IoT Core, this is a debugging snapshot, and service packs explicitly
+#     list config/shadow-*.json as never-managed. Losing them on reboot costs nothing;
+#     each is rewritten within one heartbeat. Card writes for this state: zero.
+#
+#     A skip-if-unchanged guard is also present, and it is NOT the fix. MEASURED ON
+#     HARDWARE (bench .126, 2026-08-24): it does NOT reduce the health shadow's write
+#     rate, because that shadow's `state` legitimately changes every cycle -- it embeds
+#     its own timestamp, uptime.seconds, freeMemory and disk usage. The guard was
+#     written expecting it to help; it does not. It is kept because it is correct and
+#     does skip genuinely redundant writes (the private shadow at start-up, for one).
+#     Recorded here so nobody cites it as the card-wear fix, or re-derives this the
+#     hard way.
+#
+#     The comparison covers `state` ONLY, because the wrapper's own `timestamp` changes
+#     on every serialisation and a whole-content check would never skip. `timestamp`
+#     therefore means LAST CHANGE, not last check -- safe, since the 15-minute MQTT
+#     publish to AWS IoT Core is untouched and the heartbeat stays in mqtt-client.log.
 #
 #  THIS PATCH RESTARTS SERVICES. Unlike its companion, it replaces running code, so
 #  mqtt-client.service and ble-config.service must both be restarted to take effect.
@@ -69,6 +81,15 @@
 #  It selects by observed sha. The v1.1.4 payload converges on the current image; the
 #  v1.1.0 payload converges on "v1.1.0 plus this fix", which is correct for that device
 #  and deliberately not the same bytes.
+#
+#  PREREQUISITE. This patch REQUIRES 2026-08-19-mqtt-keepalive-tolerance to have been
+#  applied -- its output sha is this patch's only accepted prior. MOST FIELD DEVICES ARE
+#  NOT AT THAT HEAD, so this patch will refuse on them until the lineage is brought up:
+#  apply 2026-08-20-ngrok-session-reclaim, then 2026-08-19-mqtt-keepalive-tolerance,
+#  then this. A refusal prints exactly that sequence rather than a bare sha mismatch.
+#  The prerequisite's marker file is checked and reported, but is NEVER the gate: a
+#  device reflashed to an image that already contains the keepalive code has the right
+#  sha and no marker, and must still be accepted.
 #
 #  ORDERING. Lineage `mqtt-client` (shares /usr/local/lib/eatabit/bin/mqtt-client.js with
 #  2026-08-19-mqtt-keepalive-tolerance, whose output is this patch's accepted prior) and
@@ -111,7 +132,7 @@ SRC_BLE_B="${SCRIPT_DIR}/ble-config-v1.1.0.js"     # for the d70edf02 prior (v1.
 # Checksums are the authoritative gate; version lists are informational. Refusing on an
 # unrecognised sha, and PRINTING it, is what makes a patch safe to hand to an operator
 # who cannot inspect the device first.
-FIXED_MQTT_SHA="4cafe4db9f942825c5ced68a83591a3ba9663140e6b7d0b5ca708cf866ba3c09"
+FIXED_MQTT_SHA="7ecbf0ead594437934e3d0e501689a3bf99a1df77acdefb4369b57fc5655a34a"
 ACCEPTED_MQTT_PRIOR_SHAS=(
   "b009b68c8692314ed8476f3bbb3b1d479c3d97fca67240f7bcf96e44444ed339"  # head of the mqtt-client lineage == pre-ISSUE-068 image source
   "${FIXED_MQTT_SHA}"                                                 # already fixed
@@ -214,6 +235,52 @@ note_version() {
 mqtt_sha() { [[ -f $MQTT_JS ]] && file_sha "$MQTT_JS" || printf ''; }
 ble_sha()  { [[ -f $BLE_JS  ]] && file_sha "$BLE_JS"  || printf ''; }
 
+# --- Prerequisite: 2026-08-19-mqtt-keepalive-tolerance ------------------------
+# This patch REQUIRES that patch to have been applied. Its output sha IS this patch's
+# accepted prior, so the sha check alone is authoritative -- but a bare "unrecognised
+# sha" refusal tells an operator nothing about what to do next, and MOST FIELD DEVICES
+# ARE NOT AT THE LINEAGE HEAD. So when the prior does not match, work out WHY and say
+# so: which prerequisite is missing, and in what order to apply them.
+#
+# The marker file is corroborating evidence only, never the gate. A device reflashed to
+# an image that already contains the keepalive code has the correct sha and NO marker,
+# and must still be accepted -- gating on the marker would refuse exactly the devices
+# that need no prerequisite at all.
+PREREQ_PATCH="2026-08-19-mqtt-keepalive-tolerance"
+PREREQ_MARKER="/usr/local/lib/eatabit/patches/${PREREQ_PATCH}/applied"
+# Priors of the lineage, so a refusal can name where the device actually sits.
+LINEAGE_STOCK_SHAS_NOTE="stock v1.0.8-v1.0.10 / v1.1.2-v1.1.4 (never patched)"
+NGROK_PATCH="2026-08-20-ngrok-session-reclaim"
+NGROK_OUTPUT_SHA="1d49a43a401d782b"   # short; informational, for the operator message
+
+prereq_state() {
+  if [[ -f $PREREQ_MARKER ]]; then printf 'marker-present'; else printf 'no-marker'; fi
+}
+
+# Explain a failed prior check in terms the operator can act on.
+explain_prior_mismatch() {
+  local observed=$1
+  log ""
+  log "WHY THIS REFUSED:"
+  log "  This patch requires ${PREREQ_PATCH} to have been applied first."
+  log "  Its output is this patch's only accepted prior:"
+  log "    ${ACCEPTED_MQTT_PRIOR_SHAS[0]}"
+  log "  This device has:"
+  log "    ${observed:-<mqtt-client.js absent>}"
+  log "  Prerequisite marker on this device: $(prereq_state)"
+  log ""
+  log "WHAT TO DO:"
+  log "  Apply the mqtt-client lineage up to its head, then re-run this patch:"
+  log "    1. ${NGROK_PATCH}   (self-contained; accepts ${LINEAGE_STOCK_SHAS_NOTE},"
+  log "       and the output of every earlier patch in the lineage; output ${NGROK_OUTPUT_SHA}...)"
+  log "    2. ${PREREQ_PATCH}  (requires 1)"
+  log "    3. this patch"
+  log "  Each ships its own --check dry run. See patches/README.md -> Lineages."
+  log ""
+  log "  If the observed sha above matches none of those, report it rather than forcing:"
+  log "  it means this device carries something this tree does not know about."
+}
+
 report_state() {
   local m b
   m="$(mqtt_sha)"; log "  ${MQTT_JS} sha: ${m:-<absent>}"
@@ -253,15 +320,15 @@ do_check() {
     exit 0
   fi
 
+  log "Prerequisite ${PREREQ_PATCH}: $(prereq_state) (corroborating only; the sha is the gate)"
+
   local m; m="$(mqtt_sha)"
   if [[ -z $m ]]; then
     log "RESULT: would REFUSE -- ${MQTT_JS} is missing. (exit 1)"; exit 1
   fi
   if ! in_list "$m" "${ACCEPTED_MQTT_PRIOR_SHAS[@]}"; then
-    log "RESULT: would REFUSE -- unrecognised ${MQTT_JS}:"
-    log "  observed: ${m}"
-    log "  accepted: ${ACCEPTED_MQTT_PRIOR_SHAS[*]}"
-    log "Report this sha -- it is a decision for ISSUE-068, not a device fault. (exit 1)"
+    log "RESULT: would REFUSE -- unrecognised ${MQTT_JS}. (exit 1)"
+    explain_prior_mismatch "$m"
     exit 1
   fi
 
@@ -303,16 +370,39 @@ __finalize_apply() {
     fail "a service did not return to active. Rollback with: sudo $SELF --rollback"
   fi
 
+  # Retire the old on-card snapshots, AFTER the restart so the pre-patch process cannot
+  # recreate them. Left in place they would be frozen at the moment of patching while
+  # still looking like live state -- a trap for whoever next reads one to debug. They are
+  # backed up first, so --rollback puts them back.
+  local old_shadow_dir="/usr/local/lib/eatabit/config"
+  local moved=0 f
+  for f in "$old_shadow_dir"/shadow-*.json; do
+    [[ -e $f ]] || continue
+    mkdir -p "${BACKUP_DIR}/config-shadows"
+    if cp -p "$f" "${BACKUP_DIR}/config-shadows/" && rm -f "$f"; then
+      moved=$((moved + 1))
+    else
+      log "  WARNING: could not retire $(basename "$f") -- left in place."
+    fi
+  done
+  if [[ $moved -gt 0 ]]; then
+    log "Retired ${moved} stale on-card shadow snapshot(s) from ${old_shadow_dir}"
+    log "  (backed up under ${BACKUP_DIR}/config-shadows; live copies are now in /run/eatabit)"
+  fi
+
   mkdir -p "$(dirname "$MARKER_FILE")"
   printf 'applied_at=%s\nfrom_version=%s\nresult=success\n' "$(date -Iseconds)" "$v" > "$MARKER_FILE"
   log "Patch applied successfully. ${SERVICE}=${s1} ${BLE_SERVICE}=${s2}"
   log "Originals backed up at: $BACKUP_DIR"
   log "Rollback command: sudo $SELF --rollback"
   log ""
-  log "To confirm the shadow-churn fix: shadow-health.json's mtime should now STOP"
-  log "advancing every 15 minutes while device state is steady --"
-  log "  stat -c '%y' /usr/local/lib/eatabit/config/shadow-health.json"
-  log "and it must still update when state actually changes."
+  log "To confirm the shadow-churn fix, check the snapshots are on tmpfs and NOT on card:"
+  log "  ls /run/eatabit/shadow-*.json                              # expect 3"
+  log "  ls /usr/local/lib/eatabit/config/shadow-*.json             # expect none"
+  log "  findmnt -no FSTYPE /run                                    # expect tmpfs"
+  log "That is the fix: these files still rewrite every 15 minutes, but on tmpfs, so"
+  log "they cost ZERO SD-card writes. Do not expect the mtime to stop advancing --"
+  log "the health shadow's state genuinely changes every cycle (uptime, freeMemory)."
 }
 
 __finalize_rollback() {
@@ -341,10 +431,14 @@ do_apply() {
   fi
 
   # --- Gates, before anything is touched -------------------------------------
+  log "Prerequisite ${PREREQ_PATCH}: $(prereq_state) (corroborating only; the sha is the gate)"
+
   local m; m="$(mqtt_sha)"
   [[ -n $m ]] || fail "${MQTT_JS} is missing. Nothing was changed."
-  in_list "$m" "${ACCEPTED_MQTT_PRIOR_SHAS[@]}" || fail \
-    "unrecognised ${MQTT_JS} (observed ${m}; accepted ${ACCEPTED_MQTT_PRIOR_SHAS[*]}). Nothing was changed. Report this sha -- it is a decision for ISSUE-068, not a device fault."
+  if ! in_list "$m" "${ACCEPTED_MQTT_PRIOR_SHAS[@]}"; then
+    explain_prior_mismatch "$m"
+    fail "unrecognised ${MQTT_JS}. Nothing was changed. See the prerequisite steps above."
+  fi
 
   local plan; plan="$(ble_plan)"
   [[ -n $plan ]] || fail \
@@ -399,6 +493,18 @@ do_rollback() {
     install -m 0755 -o root -g root "${BACKUP_DIR}/ble-config.js" "$BLE_JS" && log "  restored ${BLE_JS}"
   else
     log "  WARNING: no backup of ble-config.js -- left as it is."
+  fi
+
+  # Put the on-card snapshots back, so a rolled-back device is indistinguishable from
+  # one that never took this patch.
+  if [[ -d ${BACKUP_DIR}/config-shadows ]]; then
+    local restored=0 f
+    for f in "${BACKUP_DIR}"/config-shadows/shadow-*.json; do
+      [[ -e $f ]] || continue
+      install -m 0644 -o root -g root "$f" "/usr/local/lib/eatabit/config/$(basename "$f")" \
+        && restored=$((restored + 1))
+    done
+    [[ $restored -gt 0 ]] && log "  restored ${restored} on-card shadow snapshot(s) to /usr/local/lib/eatabit/config"
   fi
 
   log "State after rollback:"

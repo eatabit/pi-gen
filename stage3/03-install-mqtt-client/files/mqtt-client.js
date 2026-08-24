@@ -789,6 +789,11 @@ async function buildNgrokTunnel(authToken) {
 const DEVICE_READY_FLAG = "/run/eatabit/device-ready-printed";
 let hasDeviceReadyPrinted = fs.existsSync(DEVICE_READY_FLAG);
 
+// ISSUE-068: shadow snapshots live on the same tmpfs, for the same reason -- they
+// are write-only debugging artefacts, and writing them to the SD card cost
+// ~159 KiB/day for nothing. See persistShadowToFile().
+const SHADOW_STATE_DIR = "/run/eatabit";
+
 // Connection state tracking (Layer 1: Application Connection Watchdog)
 const WATCHDOG_INTERVAL_MS = 60_000; // Check every 60 seconds
 const MAX_DISCONNECT_DURATION_MS = 150_000; // 2.5 minutes
@@ -898,22 +903,41 @@ const lastPersistedShadowState = {};
 
 // Helper function to persist shadow state to file
 //
-// ISSUE-068: writes ONLY when the state has actually changed.
+// ISSUE-068: written to tmpfs, and only when the state has actually changed.
 //
-// This used to rewrite the whole file on every call. The health shadow fires on a
-// 15-minute interval, so shadow-health.json was rewritten 96 times a day -- about
-// 159 KiB/day of whole-file rewrites straight to the SD card (the eatabit config
-// directory is not RAM-buffered), roughly 7x the entire log directory. The state
-// itself is almost always identical between cycles; it was the embedded
-// `timestamp` that made every serialisation differ, so a naive content-equality
-// check would never have skipped anything. The comparison below deliberately
-// covers `state` ONLY.
+// These files used to be rewritten in full on every call, into
+// /usr/local/lib/eatabit/config -- which is NOT RAM-buffered (log2ram only ever
+// managed /var/log), so every write went straight to the SD card. The health
+// shadow fires every 15 minutes: 96 whole-file rewrites a day, ~159 KiB/day,
+// roughly 7x the write volume of the entire log directory.
 //
-// `timestamp` therefore now means LAST CHANGE, not last check. That is safe for
-// liveness: this file is write-only -- nothing in this repo or on a device reads
-// it back -- and the 15-minute MQTT publish to AWS IoT Core in
-// updateShadowReportedState() is unchanged, so cloud-side freshness is unaffected.
-// The per-cycle heartbeat also remains visible in mqtt-client.log.
+// TWO CHANGES, and the ORDER OF IMPORTANCE IS THE OPPOSITE of how it looks.
+//
+// 1. THE FILES NOW LIVE IN /run/eatabit -- tmpfs. This is what actually removes
+//    the card wear, and it is the whole fix. systemd creates the directory for
+//    this unit (RuntimeDirectory=eatabit, RuntimeDirectoryPreserve=restart), so
+//    it survives a service restart and vanishes on stop. That is the correct
+//    lifetime: these files are WRITE-ONLY. Nothing in this repo or on a device
+//    reads them back -- the authoritative shadow lives in AWS IoT Core, this is
+//    a debugging snapshot, and service packs explicitly list config/shadow-*.json
+//    as never-managed. Losing them on reboot costs nothing; they are rewritten
+//    within one heartbeat.
+//
+// 2. The skip-if-unchanged guard below. MEASURED ON HARDWARE: this does NOT
+//    reduce the health shadow's write rate, because its `state` legitimately
+//    changes every cycle -- it embeds its own timestamp, uptime.seconds,
+//    freeMemory and disk usage. The guard was written expecting it to help and
+//    it does not; it is kept because it is correct and it does skip genuinely
+//    redundant writes (the private shadow, for one, at start-up). Do not cite it
+//    as the card-wear fix -- change 1 is. Recorded so the next reader does not
+//    re-derive this the hard way.
+//
+// The comparison deliberately covers `state` ONLY: the wrapper's own `timestamp`
+// changes on every serialisation, so a whole-content equality check would never
+// skip anything. `timestamp` therefore means LAST CHANGE, not last check. Safe
+// for liveness -- the 15-minute MQTT publish to AWS IoT Core in
+// updateShadowReportedState() is untouched, so cloud-side freshness is
+// unaffected, and the per-cycle heartbeat stays visible in mqtt-client.log.
 function persistShadowToFile(shadowName) {
   try {
     const shadowConfig = SHADOW_CONFIG[shadowName];
@@ -922,13 +946,14 @@ function persistShadowToFile(shadowName) {
       return;
     }
 
-    const configDir = "/usr/local/lib/eatabit/config";
+    const shadowDir = SHADOW_STATE_DIR;
     const fileName = `shadow-${shadowName}.json`;
-    const filePath = `${configDir}/${fileName}`;
+    const filePath = `${shadowDir}/${fileName}`;
 
-    // Ensure directory exists
-    if (!fs.existsSync(configDir)) {
-      fs.mkdirSync(configDir, { recursive: true, mode: 0o755 });
+    // systemd normally provides this via RuntimeDirectory=eatabit. Create it
+    // defensively so a unit file predating that directive still works.
+    if (!fs.existsSync(shadowDir)) {
+      fs.mkdirSync(shadowDir, { recursive: true, mode: 0o755 });
     }
 
     const currentState = canonicalJson(shadowConfig.state);
