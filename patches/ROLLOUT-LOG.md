@@ -60,6 +60,7 @@ found all three healthy. **Applying a patch to them is not.**
 | `0000000092f7766c` | `512055fd-ae2e-41e3-bdbb-6b3665cfccf0` | v1.1.1 | hw/1.1 |
 | `00000000bd396b5c` | `583bd49e-87db-4892-94fe-ec3f19a368e6` | v1.1.1 | hw/1.1 |
 | `00000000edec02ad` | `34e4e3b1-7193-4c37-99f3-216289625363` | v1.1.0 | hw/1.1 |
+| `0000000094300990` | `147e874c-b5dd-49ac-a8da-6c965804353c` | v1.1.1 | hw/1.1 |
 
 ### What was applied
 
@@ -96,6 +97,12 @@ found all three healthy. **Applying a patch to them is not.**
 | `edec02ad` | log2ram-timer-hourly-sync | `2026-08-24T17:48:15+00:00` | **first sync VERIFIED 18:00:03Z** — 73,058 B → 119 B |
 | `edec02ad` | ble-classic-scan-off | `2026-08-24T17:50:20+00:00` | `PSCAN ISCAN` → gone; **5.44× mdev** |
 | `edec02ad` | mqtt-keepalive-tolerance | `2026-08-24T17:51:02+00:00` | js `b009b68c`; DNS guard 5/5; PID 1487 → 3434 |
+| `94300990` | **watchdog-exit-hang** | `2026-08-24T19:29:37+01:00` | **factory-fresh device, first patch ever**; js `177e10b8`→`e80b7a17`, unit `7999b8b6`→`e92b2a15` |
+| `94300990` | ngrok-session-reclaim | `2026-08-24T19:36:07+01:00` | js `1d49a43a`, unit `84aa9272`; 3×3 cycles all 200 |
+| `94300990` | gateway-timezone-utc | `2026-08-24T18:44:44+00:00` | MainPID 2274 unchanged |
+| `94300990` | log2ram-timer-hourly-sync | `2026-08-24T18:44:50+00:00` | **first sync VERIFIED 19:00:05Z** — 73,139 B → 119 B |
+| `94300990` | ble-classic-scan-off | `2026-08-24T18:45:20+00:00` | `PSCAN ISCAN` → gone; 2.45× mdev |
+| `94300990` | mqtt-keepalive-tolerance | `2026-08-24T18:46:01+00:00` | js `b009b68c`; DNS guard 5/5; PID 2274 → 3939 |
 
 `96a39148` was **verified only, not patched** in this campaign — it already carries all
 seven patches (reclaim `2026-08-21T19:35:07+01:00`, keepalive `2026-08-23T17:31:37+00:00`).
@@ -122,6 +129,7 @@ README's own falsification criterion.
 | `92f7766c` | 70/70 | 256 | 33/82 (40%) | 2 | weak — tiny floor |
 | `bd396b5c` | 53/70 | 220 | 45/61 (74%) | 6 | secondary |
 | `edec02ad` | **48/70** | 426 | 58/97 (60%) | 14 | secondary — worst link measured |
+| `94300990` | 57/70 | 113 | 9/10 (90%) | 1 | weak — only 10 short sessions |
 | `a15e12da` | — | 5 | 0 short sessions | 0 | **useless — no cluster to thin** |
 
 Long sessions (≥16 min) fit at 4–16%, i.e. chance, so the modulo test discriminates
@@ -146,6 +154,7 @@ tolerance for latency and not loss:
 | `92f7766c` | 73,057 B | boot (16:02Z, same day) | **not observed** ⚠ |
 | `bd396b5c` | 73,138 B | **2026-04-21** (4 months — its own provisioning date) | **119 B ✅ verified 17:00:07Z** |
 | `edec02ad` | 73,058 B | same day | **119 B ✅ verified 18:00:03Z** |
+| `94300990` | 73,139 B | same day | **119 B ✅ verified 19:00:05Z** |
 
 Bench units (`cce04a18` v1.1.4, `ce4c5d90` v1.0.10, `03c45d6d` v1.1.0) audited
 2026-08-24: all three healthy — timer enabled+active, exactly one `TimersCalendar` entry,
@@ -171,6 +180,7 @@ uniform**, and on a noisy site it is not measurable at all.
 | `92f7766c` | 70/70 | 7.029 ms | 4.731 ms | 1.49× — **real but at the noise floor** |
 | `bd396b5c` | 53/70 | 64.754 ms | 41.033 ms | 1.58× — real, but **41 ms remains: 15× the BT-OFF reference** |
 | `edec02ad` | **48/70** | 53.959 ms | **9.920 ms** | **5.44×** — worst link, biggest gain |
+| `94300990` | 57/70 | 13.249 ms | 5.398 ms | 2.45× — moderate, ~60% of jitter was BR/EDR |
 
 On `42288e07` a within-run A/B (`measure.sh -a asis,classic`) put two arms of the **same**
 radio state at mdev 6.519 and 4.470 — a **1.46× run-to-run spread**, larger than the 1.32×
@@ -262,10 +272,18 @@ does not enforce that stated exclusion, and in practice v1.1.1 devices are in sc
    `apt-get -s upgrade` first (it read `0 upgraded` on every device here, and nothing was
    ever installed). On `c3343f47` (28/70 link) the ngrok tunnel dropped seconds after that
    burst — probable cause, **not proven**: no OOM record in journal or `dmesg`.
-7. **`2026-06-30-offline-reboot-and-expired-job` has no `--check` mode.** It supports only
-   `--inline`, `--detach`, `apply`, `--rollback`, `--help`. `patches/README.md` states every
-   patch has `./apply.sh --check` with 0/1/2 semantics; a campaign script trusting that will
-   misread its exit code (an unknown-argument error also exits 1).
+7. **TWO patches have no `--check` mode**, though `patches/README.md` states every patch
+   does with 0/1/2 semantics:
+   - `2026-06-30-offline-reboot-and-expired-job`
+   - `2026-05-12-watchdog-exit-hang`
+   Both support only `--inline`, `--detach`, `apply`, `--rollback`, `--help`; an
+   unknown-argument error also exits 1, so a campaign script trusting the convention will
+   misread them. (`2026-06-30` does contain the string `--check`, but it is `node --check`
+   on line 85 — a JS syntax check, not a CLI flag. Grepping for it gives a false positive.)
+   **Substitute a manual dry run:** `2026-05-12` gates on version ∈ AFFECTED_VERSIONS plus
+   two code signatures (`setTimeout(() => process.exit(1), 3000).unref()` in the js, and
+   `StartLimitIntervalSec` **placement** in the unit), all of which can be evaluated
+   read-only before applying.
 8. **The v1.1.0 release tag exists** (`3772bd8e`), contradicting
    `2026-08-19-gateway-timezone-utc/README.md` ("There is no `v1.1.0` tag") and its
    affected-versions table, which omits v1.1.0. The tag carries the same `Europe/London`
@@ -296,6 +314,34 @@ does not enforce that stated exclusion, and in practice v1.1.1 devices are in sc
 17. **A campaign inflates this fast.** ~30 credentials in two days of patching. Any
     multi-device campaign should check `api.ngrok.com/credentials` before and after, and
     budget for reclamation, or it will hit the account cap mid-run.
+
+19. **`StartLimit*` shipped in `[Service]`, where systemd ignores it — while
+    `StartLimitAction=reboot-force` sat in `[Unit]`, where it works.** Found on factory-fresh
+    `94300990`: `StartLimitIntervalSec=600` and `StartLimitBurst=5` were in `[Service]`
+    (lines 22–23) and therefore inert, leaving an **unconstrained** reboot trigger.
+    `2026-05-12-watchdog-exit-hang` moves them into `[Unit]`; after applying, systemd reports
+    `StartLimitIntervalUSec=10min / Burst=5 / Action=reboot-force`. This is a concrete
+    instance of the BUG-044 `reboot-force` hazard that `log2ram`'s README cites for
+    destroying logs — an unpatched device can reboot-force without the rate limit ever
+    engaging. Verified the fix survives both later `mqtt-client` patches (reclaim replaces
+    the unit, keepalive replaces the js) — the `[Unit]` placement persists.
+
+20. **The prerequisite chain, demonstrated end to end on one device in 40 minutes.**
+    `94300990` was the only fully factory-fresh device in the campaign (no `patches/`
+    directory at all) despite **625 watchdog fires** — 7× the next-worst device — on a
+    healthy link (57–62/70) with 13 DNS failures. It is the cleanest proof that the gate
+    works as documented:
+
+    | time | js | unit | reclaim `--check` |
+    |---|---|---|---|
+    | 18:19 | `177e10b8` | `7999b8b6` | **refuse** (exit 1) |
+    | 18:29 | `e80b7a17` | `e92b2a15` | *(watchdog applied)* |
+    | 18:35 | — | — | **upgrade** (exit 2) |
+    | 18:36 | `1d49a43a` | `84aa9272` | exit 0 |
+
+    Both `2026-06-30` and the reclaim patch refused this device earlier the same day; the
+    watchdog patch made both applicable. Note the reclaim patch went **directly** from
+    `e80b7a17` — `2026-06-30` was never needed, since the rollup accepts that sha itself.
 
 ### Raised on excluded hardware — owned by another worker
 
