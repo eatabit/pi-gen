@@ -79,17 +79,35 @@ source of truth"*. Installing this payload therefore **reverts nothing**: it is 
 file plus the ISSUE-068 changes. Verified by comparing the deployed sha against
 `git show <ref>:stage3/03-install-mqtt-client/files/mqtt-client.js`.
 
-### `ble-config.js` has two accepted priors, and they are not interchangeable
+### `ble-config.js` has FIVE variants — one payload each
 
-`v1.0.10` and `v1.1.4` ship `2cda3a88…`. **`v1.1.0` ships a different file**,
-`d70edf02…`, differing in 53 lines unrelated to this fix. Upgrading a v1.1.0 device to
-the v1.1.4 payload would smuggle in those unrelated changes, so this patch ships a second
-payload — **`ble-config-v1.1.0.js`**, that device's own file with only the six mode sites
-narrowed — and selects by observed sha.
+Enumerated across all 15 release tags (2026-08-24):
 
-The v1.1.4 payload converges on the current image; the v1.1.0 payload converges on
-"v1.1.0 plus this fix", which is correct for that device and deliberately **not** the
+| Prior sha | Releases | Payload |
+|---|---|---|
+| `eac92d78…` | v1.0.1, v1.0.2 | `ble-config-eac92d78.js` |
+| `4654037f…` | v1.0.3 | `ble-config-4654037f.js` |
+| `d70edf02…` | v1.0.4–v1.0.6, **v1.1.0** | `ble-config-d70edf02.js` |
+| `ecbf9a06…` | v1.0.7, v1.0.8, **v1.1.1, v1.1.2** | `ble-config-ecbf9a06.js` |
+| `2cda3a88…` | v1.0.9, **v1.0.10, v1.1.3, v1.1.4** | `ble-config-2cda3a88.js` |
+
+> **The split is by release history, not by hardware line.** v1.1.0 shares a variant with
+> v1.0.4–v1.0.6; v1.0.10 shares one with v1.1.3/v1.1.4. So the gate keys on the **observed
+> sha** — never the version string, never the branch. Two devices on the same line can
+> need different payloads, and two on different lines can need the same one.
+
+Each payload is **that variant's own file** with only the six permissive-mode literals
+narrowed (3× `0o777`→`0o755`, 3× `0o666`→`0o644` — identical in all five). So no device
+receives unrelated changes from another release: a v1.0.3 device gets v1.0.3's file fixed,
+not v1.1.4's.
+
+Only the `2cda3a88` payload equals the current image source; the other four converge on
+"that release plus this fix", which is correct for those devices and deliberately not the
 same bytes.
+
+**No field patch has ever modified `ble-config.js`** — this is the first — so a device's
+deployed sha always equals its image's, and these five are exhaustive for any released
+image. An unrecognised sha is refused and printed rather than guessed at.
 
 ## Ordering
 
@@ -148,8 +166,10 @@ Checksums are the authority; the version string is informational.
 
 - `mqtt-client.js` must be `b009b68c…` (lineage head, == pre-ISSUE-068 image source) or
   the fixed `7ecbf0ea…`.
-- `ble-config.js` must be `2cda3a88…` (v1.0.10/v1.1.4) or `d70edf02…` (v1.1.0), or
-  already fixed.
+- `ble-config.js` must match one of the **five** released variants in the table above —
+  either its prior sha (upgrade) or that same variant's fixed sha (already done).
+  A device is "already fixed" only against **its own** variant's end state, never
+  another release's.
 - Anything else → **refuse**, printing the observed sha.
 
 **Byte-level verification runs before any restart.** The restart is the expensive,

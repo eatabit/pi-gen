@@ -73,14 +73,26 @@
 #  the ISSUE-068 changes. Verified by comparing the deployed sha against
 #  `git show <ref>:stage3/03-install-mqtt-client/files/mqtt-client.js`.
 #
-#  ble-config.js HAS TWO ACCEPTED PRIORS, and they are not interchangeable. v1.0.10 and
-#  v1.1.4 ship 2cda3a88...; v1.1.0 ships a different file, d70edf02..., which differs in
-#  53 lines unrelated to this fix. Upgrading a v1.1.0 device to the v1.1.4 payload would
-#  smuggle in those unrelated changes, so this patch ships a SECOND payload,
-#  ble-config-v1.1.0.js -- that device's own file with only the six mode sites narrowed.
-#  It selects by observed sha. The v1.1.4 payload converges on the current image; the
-#  v1.1.0 payload converges on "v1.1.0 plus this fix", which is correct for that device
-#  and deliberately not the same bytes.
+#  ble-config.js HAS FIVE VARIANTS across the 15 releases, and they are not
+#  interchangeable -- so this patch ships FIVE payloads, one per variant, selected by
+#  OBSERVED SHA. THE SPLIT IS BY RELEASE HISTORY, NOT BY HARDWARE LINE: v1.1.0 shares a
+#  variant with v1.0.4-v1.0.6, and v1.0.10 shares one with v1.1.3/v1.1.4. Two devices on
+#  the same line can need different payloads; two on different lines can need the same
+#  one. Never key this on the version string or the branch.
+#
+#  Each payload is THAT VARIANT'S OWN FILE with only the six permissive-mode literals
+#  narrowed (3x 0o777, 3x 0o666 -- identical in all five), so a v1.0.3 device gets
+#  v1.0.3's file fixed rather than v1.1.4's. Only the 2cda3a88 payload equals the current
+#  image source; the other four converge on "that release plus this fix", which is
+#  correct for those devices and deliberately not the same bytes.
+#
+#  An earlier draft shipped only TWO payloads, generalised from the three bench devices.
+#  That covered 8 of 15 releases and would have REFUSED on v1.0.1, v1.0.2, v1.0.3,
+#  v1.0.7, v1.0.8, v1.1.1 and v1.1.2 -- and the mqtt prerequisite would NOT have masked
+#  it, since nothing in that lineage touches ble-config.js. Enumerated properly across
+#  all 15 tags on 2026-08-24. No field patch has ever modified ble-config.js (this is the
+#  first), so a device's deployed sha always equals its image's and these five are
+#  exhaustive for any released image.
 #
 #  PREREQUISITE. This patch REQUIRES 2026-08-19-mqtt-keepalive-tolerance to have been
 #  applied -- its output sha is this patch's only accepted prior. MOST FIELD DEVICES ARE
@@ -125,8 +137,9 @@ MQTT_JS="${BIN_DIR}/mqtt-client.js"
 BLE_JS="${BIN_DIR}/ble-config.js"
 
 SRC_MQTT="${SCRIPT_DIR}/mqtt-client.js"
-SRC_BLE_A="${SCRIPT_DIR}/ble-config.js"            # for the 2cda3a88 prior (v1.0.10 / v1.1.4)
-SRC_BLE_B="${SCRIPT_DIR}/ble-config-v1.1.0.js"     # for the d70edf02 prior (v1.1.0)
+# ble-config.js payloads are named for the PRIOR sha they upgrade FROM:
+#   ${SCRIPT_DIR}/ble-config-<prior8>.js
+# See BLE_VARIANTS below for the full table.
 
 # --- Gates -------------------------------------------------------------------
 # Checksums are the authoritative gate; version lists are informational. Refusing on an
@@ -138,11 +151,24 @@ ACCEPTED_MQTT_PRIOR_SHAS=(
   "${FIXED_MQTT_SHA}"                                                 # already fixed
 )
 
-# ble-config.js: prior sha -> payload, and prior sha -> resulting fixed sha.
-BLE_PRIOR_A="2cda3a88dc7ea08a0c8875253d4d36eca3b95b12ef81010416b202a8b5235740"  # v1.0.10, v1.1.4
-BLE_FIXED_A="a1730cdb2928f2938d8eb9cd89f4462ddef114b860cefa7356b7d10411f65435"
-BLE_PRIOR_B="d70edf02fa4b1adb0b294e6215204ed1a3fe163656171d8860d93a7d9c1867b2"  # v1.1.0
-BLE_FIXED_B="a912dda06995ce35208c3c3dd622109e621824de79e77a162e4c3ab4123ee577"
+# ble-config.js: FIVE variants exist across the 15 releases, and the split is by
+# RELEASE HISTORY, not by hardware line -- v1.1.0 shares a variant with v1.0.4-v1.0.6,
+# and v1.0.10 shares one with v1.1.3/v1.1.4. So this table is keyed on the OBSERVED SHA,
+# never on the version string or the branch. Enumerated across all 15 tags 2026-08-24;
+# no field patch has ever modified ble-config.js, so a device's deployed sha always
+# equals its image's, and these five are exhaustive for any released image.
+#
+# Each row: <prior sha>:<fixed sha>:<payload filename>
+# Every payload is that variant's own file with only the six permissive-mode literals
+# narrowed (3x 0o777 -> 0o755, 3x 0o666 -> 0o644) -- identical in all five -- so no
+# device receives unrelated changes from another release.
+BLE_VARIANTS=(
+  "eac92d783265578b667dd7a149b44208fa8e052c716e76e742e319790f8b6699:b5a67b58661b66aacb0405a9f27d00b4953482be417bfd0fc9a9f4f59ffd076f:ble-config-eac92d78.js"  # v1.0.1, v1.0.2
+  "4654037f1544f99ed2db618b8806f3b9f4b4144d3191fd7b6123ed96e6a167ca:999d9a98ef795e060fe6895bf6b4442a55592e6ba973207e5aaec7e7bf9e04cf:ble-config-4654037f.js"  # v1.0.3
+  "d70edf02fa4b1adb0b294e6215204ed1a3fe163656171d8860d93a7d9c1867b2:a912dda06995ce35208c3c3dd622109e621824de79e77a162e4c3ab4123ee577:ble-config-d70edf02.js"  # v1.0.4-v1.0.6, v1.1.0
+  "ecbf9a06f9b699d7e5296c8087fec816d111c6792ab67ae2d62752947b0965a0:fff83fb7d3ea28a9a6681ad5de7e5218680e4b58e4e758ae548d697adefbb860:ble-config-ecbf9a06.js"  # v1.0.7, v1.0.8, v1.1.1, v1.1.2
+  "2cda3a88dc7ea08a0c8875253d4d36eca3b95b12ef81010416b202a8b5235740:a1730cdb2928f2938d8eb9cd89f4462ddef114b860cefa7356b7d10411f65435:ble-config-2cda3a88.js"  # v1.0.9, v1.0.10, v1.1.3, v1.1.4
+)
 
 KNOWN_VERSIONS=(1.0.1 1.0.2 1.0.3 1.0.4 1.0.5 1.0.6 1.0.7 1.0.8 1.0.9 1.0.10
                 1.1.0 1.1.1 1.1.2 1.1.3 1.1.4)
@@ -287,21 +313,34 @@ report_state() {
   b="$(ble_sha)";  log "  ${BLE_JS} sha: ${b:-<absent>}"
 }
 
-# Which ble payload does this device's observed prior call for? Echoes "<src>|<fixed>".
-# Empty output means the observed sha is not one we know how to upgrade.
+# Which ble payload does this device's observed sha call for? Echoes "<src>|<fixed>".
+# Matches either the PRIOR (needs upgrading) or the FIXED sha (already done, so the
+# same row is returned and the caller no-ops). Empty output means the observed sha is
+# not one this patch knows how to upgrade -- refuse, do not guess.
 ble_plan() {
-  local b; b="$(ble_sha)"
-  case "$b" in
-    "$BLE_PRIOR_A"|"$BLE_FIXED_A") printf '%s|%s' "$SRC_BLE_A" "$BLE_FIXED_A" ;;
-    "$BLE_PRIOR_B"|"$BLE_FIXED_B") printf '%s|%s' "$SRC_BLE_B" "$BLE_FIXED_B" ;;
-    *) printf '' ;;
-  esac
+  local b row prior fixed file
+  b="$(ble_sha)"
+  [[ -n $b ]] || { printf ''; return; }
+  for row in "${BLE_VARIANTS[@]}"; do
+    prior="${row%%:*}"
+    fixed="${row#*:}"; fixed="${fixed%%:*}"
+    file="${row##*:}"
+    if [[ $b == "$prior" || $b == "$fixed" ]]; then
+      printf '%s|%s' "${SCRIPT_DIR}/${file}" "$fixed"
+      return
+    fi
+  done
+  printf ''
 }
 
+# True only when BOTH files are at their fixed shas. For ble that means the fixed sha of
+# THIS DEVICE'S variant -- not any fixed sha, since a device must not be considered done
+# because it happens to match another release's end state.
 is_fixed() {
   [[ "$(mqtt_sha)" == "$FIXED_MQTT_SHA" ]] || return 1
-  local b; b="$(ble_sha)"
-  [[ $b == "$BLE_FIXED_A" || $b == "$BLE_FIXED_B" ]] || return 1
+  local plan; plan="$(ble_plan)"
+  [[ -n $plan ]] || return 1
+  [[ "$(ble_sha)" == "${plan##*|}" ]] || return 1
   return 0
 }
 
@@ -310,8 +349,11 @@ do_check() {
   log "DRY RUN -- nothing will be changed. (No root required.)"
   log "Payloads shipped with this patch:"
   log "  mqtt-client.js       : $(file_sha "$SRC_MQTT")"
-  log "  ble-config.js        : $(file_sha "$SRC_BLE_A")  (for v1.0.10 / v1.1.4)"
-  log "  ble-config-v1.1.0.js : $(file_sha "$SRC_BLE_B")  (for v1.1.0)"
+  local row file
+  for row in "${BLE_VARIANTS[@]}"; do
+    file="${row##*:}"
+    log "  ${file} : $(file_sha "${SCRIPT_DIR}/${file}")"
+  done
   log "State on this device:"
   report_state
 
@@ -335,8 +377,9 @@ do_check() {
   local plan; plan="$(ble_plan)"
   if [[ -z $plan ]]; then
     log "RESULT: would REFUSE -- unrecognised ${BLE_JS} (observed $(ble_sha)). (exit 1)"
-    log "  accepted priors: ${BLE_PRIOR_A} (v1.0.10/v1.1.4)"
-    log "                   ${BLE_PRIOR_B} (v1.1.0)"
+    log "  accepted priors (one per released variant):"
+    local row
+    for row in "${BLE_VARIANTS[@]}"; do log "    ${row%%:*}"; done
     exit 1
   fi
   log "ble-config payload selected: $(basename "${plan%%|*}")"
@@ -441,8 +484,13 @@ do_apply() {
   fi
 
   local plan; plan="$(ble_plan)"
-  [[ -n $plan ]] || fail \
-    "unrecognised ${BLE_JS} (observed $(ble_sha); accepted ${BLE_PRIOR_A} for v1.0.10/v1.1.4, ${BLE_PRIOR_B} for v1.1.0). Nothing was changed."
+  if [[ -z $plan ]]; then
+    log "Observed ${BLE_JS}: $(ble_sha)"
+    log "Accepted priors (one per released variant):"
+    local row
+    for row in "${BLE_VARIANTS[@]}"; do log "  ${row%%:*}"; done
+    fail "unrecognised ${BLE_JS}. Nothing was changed. Report the observed sha -- it means this device carries a ble-config.js this tree does not know about."
+  fi
   local ble_src="${plan%%|*}" ble_expect="${plan##*|}"
   [[ -r $ble_src  ]] || fail "payload ${ble_src} is missing from this patch directory."
   [[ -r $SRC_MQTT ]] || fail "payload ${SRC_MQTT} is missing from this patch directory."
