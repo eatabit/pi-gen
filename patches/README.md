@@ -24,10 +24,12 @@ planning a campaign; the directory listing on its own will mislead you.
 
 | Lineage | Target files | Patches, in order |
 |---|---|---|
-| **`mqtt-client`** | `/usr/local/lib/eatabit/bin/mqtt-client.js`, `/etc/systemd/system/mqtt-client.service` | 1. [`2026-05-12-watchdog-exit-hang`](./2026-05-12-watchdog-exit-hang/)<br>2. [`2026-06-30-offline-reboot-and-expired-job`](./2026-06-30-offline-reboot-and-expired-job/)<br>3. [`2026-08-20-ngrok-session-reclaim`](./2026-08-20-ngrok-session-reclaim/) — **self-contained**<br>4. [`2026-08-19-mqtt-keepalive-tolerance`](./2026-08-19-mqtt-keepalive-tolerance/) — **requires 3** |
+| **`mqtt-client`** | `/usr/local/lib/eatabit/bin/mqtt-client.js`, `/etc/systemd/system/mqtt-client.service` | 1. [`2026-05-12-watchdog-exit-hang`](./2026-05-12-watchdog-exit-hang/)<br>2. [`2026-06-30-offline-reboot-and-expired-job`](./2026-06-30-offline-reboot-and-expired-job/)<br>3. [`2026-08-20-ngrok-session-reclaim`](./2026-08-20-ngrok-session-reclaim/) — **self-contained**<br>4. [`2026-08-19-mqtt-keepalive-tolerance`](./2026-08-19-mqtt-keepalive-tolerance/) — **requires 3**<br>5. [`2026-08-23-app-permissions-and-shadow-churn`](./2026-08-23-app-permissions-and-shadow-churn/) — **requires 4** |
 | **`bluetooth`** | `/etc/bluetooth/main.conf`, `/etc/systemd/system/bluetooth-poweron.service` | 1. [`2026-08-20-ble-classic-scan-off`](./2026-08-20-ble-classic-scan-off/) — **independent** |
 | **`timezone`** | `/etc/timezone`, `/etc/localtime` (symlink) | 1. [`2026-08-19-gateway-timezone-utc`](./2026-08-19-gateway-timezone-utc/) — **independent** |
 | **`log2ram`** | `/etc/systemd/system/log2ram-daily.timer.d/hourly.conf`, `/etc/log2ram.conf` | 1. [`2026-08-19-log2ram-timer-hourly-sync`](./2026-08-19-log2ram-timer-hourly-sync/) — **independent** |
+| **`log-permissions`** | `/usr/local/lib/eatabit/{log,config,reset}` (directory modes), `/etc/logrotate.d/eatabit-mqtt-client`, `/etc/logrotate.d/eatabit-ble-config` | 1. [`2026-08-23-log-permissions-and-rotation`](./2026-08-23-log-permissions-and-rotation/) — **independent** |
+| **`ble-config`** | `/usr/local/lib/eatabit/bin/ble-config.js` | 1. [`2026-08-24-ble-config-permissions`](./2026-08-24-ble-config-permissions/) — **independent** |
 
 **`2026-08-19-gateway-timezone-utc` targets files no other patch touches** — it replaces
 no file at all, gating instead on the deployed timezone state — so it is independent of
@@ -39,6 +41,35 @@ log2ram timer drop-in and `/etc/log2ram.conf`, which no other patch here touches
 shares no checksum with any of them and may be applied at any point in a campaign. Like the
 timezone patch it **replaces no file** — it enables a unit and adds a drop-in — so it gates
 on observed state rather than a replaced-file sha, and it **restarts nothing**.
+
+**ISSUE-068 ships THREE patches, and they share no file with one another**, so they may be
+applied in any order — but **all three are needed** to close it on a device:
+
+| Patch | Fixes | Restarts | Reach |
+|---|---|---|---|
+| `2026-08-23-log-permissions-and-rotation` | directory modes + both logrotate stanzas | **nothing** | every released version |
+| `2026-08-24-ble-config-permissions` | `ble-config.js`'s six mode literals | `ble-config.service` only | every released variant |
+| `2026-08-23-app-permissions-and-shadow-churn` | `mqtt-client.js` modes + shadow snapshots to tmpfs | `mqtt-client.service` | **only devices that can enter the `mqtt-client` lineage** |
+
+The first narrows the directories that exist *now*; the other two stop the applications
+re-creating them `0o777`. Without the application patches, one service start against an
+absent directory silently undoes the first.
+
+**That last row is the one to plan around.** The `mqtt-client` lineage entry point accepts
+only stock v1.0.8–v1.0.10 / v1.1.2–v1.1.4, so a device on v1.0.1–v1.0.7, v1.1.0 or v1.1.1
+cannot enter the lineage and cannot take that patch. The other two have no such limit.
+`ble-config.js` was split out of it for exactly this reason — welded together, that dead
+end governed a fix that needs no lineage at all.
+
+**`2026-08-23-log-permissions-and-rotation` opens a new lineage of its own.** It targets
+three directory *modes* and the two `/etc/logrotate.d/eatabit-*` files. **No other patch
+here writes `/etc/logrotate.d` at all, and none alters a directory mode**, so it shares no
+checksum with any of them and may be applied at any point in a campaign. Like the timezone
+and log2ram-timer patches it **restarts nothing** — it writes no unit file, so it does not
+even need `daemon-reload`. Note its known limitation: `mqtt-client.js` / `ble-config.js`
+re-create those directories `0o777` if they ever find them missing, so a service start
+against an absent directory can undo it. Re-running the patch fixes that; the permanent
+fix is the image.
 
 **The two `2026-08-20` patches share no file and therefore no checksum.** They may be
 applied in either order, or one without the other. The shared date is a coincidence of

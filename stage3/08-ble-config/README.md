@@ -158,7 +158,7 @@ Two printer settings are persisted to JSON config files in `/usr/local/lib/eatab
 | Cutter type | `cutter-type.json` | `"partial"` | `"partial"`, `"full"`, `"none"` |
 | Volume | `volume.json` | `4` | `0`–`8` (0 = off) |
 
-Both are loaded at startup and saved on every write. Config directories are created with mode `0o777` and files with `0o666` to ensure accessibility across services.
+Both are loaded at startup and saved on every write. Config directories are created with mode `0o755` and files with `0o644`. Every service that reads or writes them runs as `User=root`, so no wider mode is needed — and a world-writable parent directory makes `logrotate` skip every file inside it, which is why the previous `0o777` / `0o666` were narrowed (ISSUE-068).
 
 ## Diagnostics Page
 
