@@ -81,13 +81,16 @@
 #  NOT IN THIS PATCH, deliberately: the application-code half of ISSUE-068 Phase 2 --
 #  mqtt-client.js / ble-config.js create these directories at 0o777 and their log files
 #  at 0o666 when they find them missing, and mqtt-client.js also rewrites
-#  shadow-health.json every 15 minutes. Those live in the mqtt-client lineage, whose
-#  deployed head is 2026-08-19-mqtt-keepalive-tolerance; a payload for them must be
-#  built ON TOP of that patch's output or it silently reverts it. That is a separate
-#  patch. CONSEQUENCE FOR THIS ONE: if a service is ever started while one of these
-#  directories is ABSENT, the application will re-create it 0777 and rotation will
-#  break again. Re-running this patch fixes it; the permanent fix is the image (or the
-#  application patch).
+#  shadow-health.json every 15 minutes. That is the COMPANION patch,
+#  2026-08-23-app-permissions-and-shadow-churn. It shares no file with this one -- this
+#  patch touches directory modes and /etc/logrotate.d, the companion touches
+#  /usr/local/lib/eatabit/bin -- so the two are independent and may be applied in either
+#  order. The companion RESTARTS SERVICES (it replaces running code); this one does not,
+#  so this patch alone still gets rotation working if a restart cannot be taken now.
+#
+#  CONSEQUENCE FOR THIS ONE: if a service is ever started while one of these directories
+#  is ABSENT, the application will re-create it 0777 and rotation will break again.
+#  Re-running this patch fixes it; the durable fixes are the image and the companion.
 # =============================================================================
 set -uo pipefail
 

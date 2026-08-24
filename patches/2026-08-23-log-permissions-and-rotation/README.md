@@ -132,8 +132,15 @@ files at `0o666` **when they find them missing**. So if a service ever starts wh
 these directories is absent, it will be re-created world-writable and rotation will break
 again.
 
-Re-running this patch fixes it. The permanent fix is the image (ISSUE-068 Phase 2 narrowed
-all 14 application-code sites), or a follow-up patch carrying the application changes —
-which must chain the **`mqtt-client` lineage** on top of
-`2026-08-19-mqtt-keepalive-tolerance`, or it would silently revert that patch. That is
-deliberately **not** this patch.
+Re-running this patch fixes it. The permanent fixes are the image (ISSUE-068 Phase 2
+narrowed all 14 application-code sites) and the companion patch
+[`2026-08-23-app-permissions-and-shadow-churn`](../2026-08-23-app-permissions-and-shadow-churn/),
+which carries those application changes to deployed devices and also stops the
+`shadow-health.json` rewrite churn.
+
+**Apply both to close ISSUE-068 on a device.** They share no file — this one touches
+directory modes and `/etc/logrotate.d`, the companion touches
+`/usr/local/lib/eatabit/bin` — so they are independent and may go in either order. The
+companion **restarts services** (it replaces running code) while this one restarts
+nothing, so if you cannot take a restart right now, this patch alone still gets rotation
+working.
