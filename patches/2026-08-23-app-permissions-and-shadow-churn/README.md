@@ -26,24 +26,38 @@ and rotation breaks again.
 **14 sites:** 8 in `mqtt-client.js`, 6 in `ble-config.js` (`0o777`→`0o755`,
 `0o666`→`0o644`).
 
-### 2 · `shadow-health.json` rewrite churn
+### 2 · Shadow snapshot churn — fixed by moving the files to tmpfs
 
-`persistShadowToFile()` rewrote the whole file on every call, and the health shadow fires
-every 15 minutes — **96 whole-file rewrites a day, ~159 KiB/day** straight to the SD card
-(that directory is **not** RAM-buffered; log2ram only ever managed `/var/log`), roughly
-**7× the write volume of the entire log directory**.
+`persistShadowToFile()` rewrote the whole file on every call into
+`/usr/local/lib/eatabit/config`, which is **not** RAM-buffered (log2ram only ever managed
+`/var/log`). The health shadow fires every 15 minutes: **96 whole-file rewrites a day,
+~159 KiB/day** straight to the SD card — roughly **7× the write volume of the entire log
+directory**.
 
-The state is almost always identical between cycles. It was the embedded `timestamp` that
-made every serialisation differ — so a naive content-equality check **would never have
-skipped anything**. The fix compares the **`state` object only**, via a canonical
-sorted-key encoding so key ordering cannot produce a false match, and consults the on-disk
-file once after start-up so a restart does not force a redundant write either.
+**The fix is the location.** The snapshots now live in **`/run/eatabit`** — tmpfs. systemd
+already creates that directory for this unit (`RuntimeDirectory=eatabit`,
+`RuntimeDirectoryPreserve=restart`), so it survives a service restart and is discarded on
+stop. That is the right lifetime, because these files are **write-only**: nothing in the
+image or on a device reads them back, the authoritative shadow lives in AWS IoT Core, and
+service packs already list `config/shadow-*.json` as never-managed. Losing them on reboot
+costs nothing — each is rewritten within one heartbeat. **Card writes for this state: zero.**
 
-> **Semantic change, not just an optimisation:** `timestamp` now means **last change**,
-> not last check. Safe for liveness — the file is **write-only** (nothing in the image or
-> on a device reads it back) and the 15-minute MQTT publish to AWS IoT Core is untouched,
-> so cloud-side freshness is unaffected. The per-cycle heartbeat also stays visible in
-> `mqtt-client.log`.
+The patch also **retires the stale on-card copies** after the restart (backing them up
+first, so `--rollback` restores them). Left in place they would be frozen at the moment of
+patching while still looking like live state — a trap for whoever next reads one to debug.
+
+> **A skip-if-unchanged guard is also present, and it is NOT the fix.** Measured on bench
+> device `.126` (2026-08-24): it does **not** reduce the health shadow's write rate,
+> because that shadow's `state` legitimately changes every cycle — it embeds its own
+> timestamp, `uptime.seconds`, `freeMemory` and disk usage. The guard was written
+> expecting it to help; it does not. It is kept because it is correct and does skip
+> genuinely redundant writes (the private shadow at start-up, for one). **Do not cite it
+> as the card-wear fix — the tmpfs move is.**
+>
+> The comparison covers `state` only, because the wrapper's own `timestamp` changes on
+> every serialisation and a whole-content check would never skip. So `timestamp` means
+> **last change**, not last check — safe, since the 15-minute MQTT publish to AWS IoT Core
+> is untouched and the heartbeat stays visible in `mqtt-client.log`.
 
 ## Payloads — the image source, byte for byte
 
@@ -105,12 +119,35 @@ immediately and the work continues without you. Reconnect and read
 sudo ./2026-08-23-app-permissions-and-shadow-churn/apply.sh --rollback
 ```
 
+## Prerequisite — `2026-08-19-mqtt-keepalive-tolerance`
+
+**This patch requires that patch to have been applied.** Its output sha is this patch's
+only accepted prior.
+
+> **Most field devices are NOT at the lineage head**, so this patch will refuse on them
+> until the lineage is brought up. Apply in this order:
+>
+> 1. [`2026-08-20-ngrok-session-reclaim`](../2026-08-20-ngrok-session-reclaim/) —
+>    self-contained; accepts stock v1.0.8–v1.0.10 / v1.1.2–v1.1.4 and the output of every
+>    earlier patch in the lineage
+> 2. [`2026-08-19-mqtt-keepalive-tolerance`](../2026-08-19-mqtt-keepalive-tolerance/) —
+>    requires 1
+> 3. this patch
+>
+> A refusal prints exactly that sequence, plus the observed sha, rather than a bare
+> mismatch.
+
+The prerequisite's **marker file is reported but is never the gate.** A device reflashed
+to an image that already contains the keepalive code has the correct sha and no marker,
+and must still be accepted — gating on the marker would refuse precisely the devices that
+need no prerequisite at all.
+
 ## Gates
 
 Checksums are the authority; the version string is informational.
 
 - `mqtt-client.js` must be `b009b68c…` (lineage head, == pre-ISSUE-068 image source) or
-  the fixed `4cafe4db…`.
+  the fixed `7ecbf0ea…`.
 - `ble-config.js` must be `2cda3a88…` (v1.0.10/v1.1.4) or `d70edf02…` (v1.1.0), or
   already fixed.
 - Anything else → **refuse**, printing the observed sha.
@@ -122,9 +159,11 @@ fails with nothing restarted rather than being discovered afterwards.
 ## Verifying the churn fix afterwards
 
 ```bash
-stat -c '%y' /usr/local/lib/eatabit/config/shadow-health.json
+ls /run/eatabit/shadow-*.json                    # expect 3
+ls /usr/local/lib/eatabit/config/shadow-*.json   # expect none
+findmnt -no FSTYPE /run                          # expect tmpfs
 ```
 
-Its mtime should **stop advancing every 15 minutes** while device state is steady — and
-must **still update when state actually changes**. Both halves matter: a change that
-stopped writing altogether would be a regression, not a fix.
+**Do not expect the mtime to stop advancing.** The files still rewrite every 15 minutes —
+the health shadow's state genuinely changes each cycle — but they now do so on tmpfs, so
+they cost **zero SD-card writes**. The location is the fix, not the write frequency.
