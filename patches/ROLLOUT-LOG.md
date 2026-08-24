@@ -57,6 +57,7 @@ found all three healthy. **Applying a patch to them is not.**
 | `00000000c3343f47` | `1b403828-0409-4aa0-afbd-cb0ad3692b69` | v1.1.4 | hw/1.1 |
 | `0000000042288e07` | `172144e4-aa9a-451e-be66-b98233f39be9` | v1.1.1 | hw/1.1 |
 | `0000000096a39148` | `1382dc9c-9abb-4b48-b0f7-61c6179de18b` | v1.1.1 | hw/1.1 |
+| `0000000092f7766c` | `512055fd-ae2e-41e3-bdbb-6b3665cfccf0` | v1.1.1 | hw/1.1 |
 
 ### What was applied
 
@@ -78,6 +79,7 @@ found all three healthy. **Applying a patch to them is not.**
 | `42288e07` | gateway-timezone-utc | `2026-08-24T15:23:23+00:00` | MainPID 2053 unchanged; 3-way agreement |
 | `42288e07` | log2ram-timer-hourly-sync | `2026-08-24T15:23:45+00:00` | installed; **first sync NOT observed** |
 | `42288e07` | ble-classic-scan-off | `2026-08-24T15:25:45+00:00` | `PSCAN ISCAN` → gone; self-check passed; mqtt-client untouched |
+| `92f7766c` | ngrok-session-reclaim | `2026-08-24T17:07:07+01:00` | js `1d49a43a`, unit `84aa9272`; 3×3 cycles all 200; needed a reboot first |
 
 `96a39148` was **verified only, not patched** in this campaign — it already carries all
 seven patches (reclaim `2026-08-21T19:35:07+01:00`, keepalive `2026-08-23T17:31:37+00:00`).
@@ -101,6 +103,7 @@ README's own falsification criterion.
 | `42288e07` | **65/70** | **713** | **305/430 (71%)** | **107** | **primary** |
 | `c3343f47` | 28/70 | 248 | 53/127 (42%) | 14 | secondary |
 | `db996da7` | — | 49 | 19/24 (79%) | 6 | secondary |
+| `92f7766c` | 70/70 | 256 | 33/82 (40%) | 2 | weak — tiny floor |
 | `a15e12da` | — | 5 | 0 short sessions | 0 | **useless — no cluster to thin** |
 
 Long sessions (≥16 min) fit at 4–16%, i.e. chance, so the modulo test discriminates
@@ -232,7 +235,7 @@ does not enforce that stated exclusion, and in practice v1.1.1 devices are in sc
 
 ### Raised on excluded hardware — owned by another worker
 
-14. **`/usr/local/lib/eatabit/log` was NOT writable on bench unit `cce04a18`** (observed
+15. **`/usr/local/lib/eatabit/log` was NOT writable on bench unit `cce04a18`** (observed
     2026-08-24, read-only audit). `logrotate` fails with
     `error creating output file …/mqtt-client.log.1.gz: Read-only file system`, while `/` is
     mounted `rw,noatime`, `/tmp` is writable, `dmesg` shows no ext4/mmc I/O errors and the
@@ -250,12 +253,17 @@ does not enforce that stated exclusion, and in practice v1.1.1 devices are in sc
 10. **BUG-049 acceptance test** (run after every reclaim application): 3 × stop→start, all
     must return 200, and the ngrok API must show one agent session for N starts. Passed on
     `db996da7`, `a15e12da`, `42288e07`.
-11. **BUG-039 verified free of charge four times** — on any later restart, check that
+11. **Session reclamation is not instantaneous — re-check before calling a leak.** On
+    `92f7766c` the ngrok API showed **3** sessions immediately after 4 starts + 3 stops,
+    which looks like the BUG-049 leak. Thirty seconds later it was **1**, stable across
+    three checks. Sample the session count ~30 s after the final stop, not immediately.
+
+12. **BUG-039 verified free of charge four times** — on any later restart, check that
     `/run/eatabit/device-ready-printed` has an mtime *older* than
     `ExecMainStartTimestamp`. No test print required.
-12. **`mqtt-client.service: Failed with result 'timeout'`** appears in the journal on every
+13. **`mqtt-client.service: Failed with result 'timeout'`** appears in the journal on every
     restart across all devices. Benign: the old process exceeds its stop timeout while the
     new one starts clean.
-13. **Re-check idle immediately before a restart, not at recon time.** On `db996da7` a real
+14. **Re-check idle immediately before a restart, not at recon time.** On `db996da7` a real
     customer job printed 2 m 19 s before the restart while the idle reading in hand was
     38 minutes stale. Nothing was dropped, by luck.
