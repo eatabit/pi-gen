@@ -87,6 +87,41 @@ how the code got here — not a sequence you must replay.
 **earlier** than the patch it depends on — the date records when the bug was filed, not
 the order. **Read the lineage column, never the dates.**
 
+### A device flashed to v1.0.11 or later is AHEAD of most of this lineage
+
+**v1.0.11 / v1.1.5 ship `mqtt-client.js` at `7ecbf0ea…`, which is the END STATE of
+`2026-08-23-app-permissions-and-shadow-churn`** — the last entry in the `mqtt-client`
+lineage. So a freshly flashed device does not enter that lineage at the bottom; it starts at
+the top.
+
+| Patch | On a v1.0.11 / v1.1.5 device |
+|---|---|
+| 1. `2026-05-12-watchdog-exit-hang` | superseded |
+| 2. `2026-06-30-offline-reboot-and-expired-job` | **`NO-OP — device is AHEAD of this patch`** |
+| 3. `2026-08-20-ngrok-session-reclaim` | **`NO-OP — device is AHEAD of this patch`** |
+| 4. `2026-08-19-mqtt-keepalive-tolerance` | **`NO-OP — device is AHEAD of this patch`** |
+| 5. `2026-08-23-app-permissions-and-shadow-churn` | no-op — already at its fixed sha |
+
+**Entries 2–4 report that through a third gate state, `SUPERSEDED_SHAS`, checked BEFORE the
+accepted-prior list and exiting 0.** Without it they would refuse — telling an operator the
+file is *unrecognised* when in fact it is *newer*.
+
+**Do NOT "fix" that by adding the release sha to `ACCEPTED_PRIOR_SHAS`.** That list means
+*"install my payload over this"*, and each of those patches bundles a payload whose sha **is
+its own older `FIXED_SHA`** — `2f8848db…`, `1d49a43a…`, `b009b68c…`. Accepting a downstream
+sha as a prior makes the patch **overwrite newer code with older**, silently reverting
+whatever landed after it. Retargeting `FIXED_SHA` instead is equally wrong: the bundled
+payload is unchanged, so the post-install verification then fails.
+
+**This is not hypothetical.** `iot-doc/ops/Pi-Rollout-Log.md` records device `db996da7`,
+where `2026-06-30-offline-reboot-and-expired-job` was declined **by hand** — *"Applying it
+would have been a downgrade."* An operator caught it. `SUPERSEDED_SHAS` is that judgement
+moved into the gate, so it does not depend on someone making it again.
+
+**When you add a patch to a lineage, add its end-state sha to the `SUPERSEDED_SHAS` of every
+patch below it in that lineage.** Otherwise each older patch starts refusing devices that
+took your new one, and the refusal reads as corruption rather than as "already ahead".
+
 ### How to tell for yourself, without trusting this table
 
 The checksums are the authority, and every patch has a dry run that needs no root and
@@ -123,6 +158,31 @@ killing the very session it was issued over. The re-exec must also go through
 silently. `_template/apply.sh` gets all of this right; the filled-in reference is
 [`2026-08-20-ngrok-session-reclaim/apply.sh`](./2026-08-20-ngrok-session-reclaim/apply.sh).
 Fix a defect in the template first, then sweep the copies.
+
+**Any `apply.sh` that replaces `/etc/systemd/system/mqtt-client.service` MUST accept
+`84aa9272b43699c7d337f8b6e63f2b90d38306335d51bb3475e2e2f4201fc25f` as a prior.** That is the
+unit **the fleet is actually running** — installed by `2026-08-20-ngrok-session-reclaim`,
+which reached most devices. A patch gating only on the two *stock* unit shas
+(`7999b8b6…`, `e92b2a15…`) would refuse the majority of the fleet while looking correct in
+review, because both stock values are real and the omission is invisible unless you know what
+is deployed. The same single-prior trap the `mqtt-client.js` lineage already documents, on
+the unit instead.
+
+**These scripts carry a CROSS-LINE BYTE-IDENTITY invariant. Change them only in PAIRED PRs,
+merged together or not at all.** `hw/1.0` and `hw/1.1` must hold byte-identical copies of
+every `apply.sh` here, and that identity is what proves the two hardware lines have not
+drifted. A change landing on one line alone breaks the proof itself — and it is **comment
+edits** that do this, because they look too trivial to pair: three one-line comment changes
+broke it during the v1.0.11 / v1.1.5 cycle alone. Open both PRs before either is reviewed,
+say in each that it must merge with its twin, and verify identity after both land:
+
+```bash
+for p in patches/*/apply.sh; do
+  a=$(git show "origin/hw/1.1:$p" | shasum -a 256 | cut -c1-12)
+  b=$(git show "origin/hw/1.0:$p" | shasum -a 256 | cut -c1-12)
+  [ "$a" = "$b" ] || echo "DRIFT: $p"
+done
+```
 
 State its lineage in its `README.md` header block — the table at the top of every patch
 here — and add it to the table above. If it targets a file no existing lineage covers, it
