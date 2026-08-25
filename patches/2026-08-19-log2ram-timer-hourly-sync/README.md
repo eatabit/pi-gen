@@ -1,5 +1,10 @@
 # 2026-08-19 · `log2ram-daily.timer` never enabled — enable it and sync hourly
 
+> **v1.0.11 / v1.1.5 ALREADY CARRY THIS FIX.** A device flashed to either lands
+> exactly on this patch's fixed state, so the patch **no-ops**. Verified against both
+> built images on 2026-08-25 (`ISSUE-065`). Apply only to devices on **earlier**
+> firmware.
+
 | | |
 |---|---|
 | **Patch ID** | `2026-08-19-log2ram-timer-hourly-sync` |
@@ -7,7 +12,7 @@
 | **Lineage** | **`log2ram` — new, and independent of every other lineage here.** Targets `/etc/systemd/system/log2ram-daily.timer.d/hourly.conf` and `/etc/log2ram.conf`. No other patch in this tree touches either file, so this patch shares no checksum with `mqtt-client`, `bluetooth` or `timezone` and **may be applied at any point in a campaign** — before them, after them, or entirely on its own. |
 | **Affected versions** | **All 15 released tags** — v1.0.1–v1.0.10, v1.1.0–v1.1.4 |
 | **Restarts** | **Nothing.** Safe on a live, printing device; no maintenance window needed. |
-| **Ships in** | v1.0.11 / v1.1.5 (`ISSUE-065`) — a reflashed device lands on `FIXED_SHA` and this patch no-ops |
+| **Shipped in** | **v1.0.11 / v1.1.5 — released 2026-08-25** (`ISSUE-065`). A reflashed device lands on `FIXED_SHA` and this patch no-ops; confirmed against both built images. |
 
 ## What is wrong
 

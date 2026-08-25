@@ -1,5 +1,10 @@
 # `2026-08-23-app-permissions-and-shadow-churn` — ISSUE-068, Phase 2 (application half)
 
+> **v1.0.11 / v1.1.5 ALREADY CARRY THIS FIX.** A device flashed to either lands
+> exactly on this patch's fixed state, so the patch **no-ops**. Verified against both
+> built images on 2026-08-25 (`ISSUE-065`). Apply only to devices on **earlier**
+> firmware.
+
 Companion to [`2026-08-23-log-permissions-and-rotation`](../2026-08-23-log-permissions-and-rotation/),
 which fixes the same problem from the filesystem side. **Applying both is what closes
 ISSUE-068 on a deployed device.** They share no file, so either may go first.

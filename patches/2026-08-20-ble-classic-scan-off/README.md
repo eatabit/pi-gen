@@ -1,5 +1,10 @@
 # 2026-08-20-ble-classic-scan-off — BUG-040
 
+> **v1.0.11 / v1.1.5 ALREADY CARRY THIS FIX.** This patch gates on deployed state
+> rather than a replaced-file checksum, and both built images were confirmed to be in
+> that state on 2026-08-25 (`ISSUE-065`), so it has nothing to do on a freshly flashed
+> device. Apply only to devices on **earlier** firmware.
+
 > | | |
 > |---|---|
 > | **Lineage** | `bluetooth` — touches `/etc/bluetooth/main.conf` and `bluetooth-poweron.service` |
