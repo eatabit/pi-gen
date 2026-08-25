@@ -69,7 +69,7 @@ ACCEPTED_PRIOR_SHAS=(
 # patch's payload IS b009b68c -- so accepting a downstream sha would OVERWRITE newer
 # code with older, silently reverting whatever landed after it.
 #
-# That is not hypothetical. docs/ROLLOUT-LOG.md records device db996da7, where
+# That is not hypothetical. the fleet rollout log (iot-doc/ops/Pi-Rollout-Log.md) records device db996da7, where
 # 2026-06-30-offline-reboot-and-expired-job was declined by hand for exactly this
 # reason: "Applying it would have been a downgrade." An operator caught it. This list
 # is that catch, moved into the gate where it cannot be missed.
