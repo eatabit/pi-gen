@@ -7,6 +7,20 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.0.11] — 2026-08-25
+
+*Ships seven of the ten items gated on this release, plus two that were not gated by it —
+`ISSUE-068` (log rotation, permissions, shadow churn) and `BUG-047` (field-patch SSH
+detach). Three of the ten are deliberately absent, for three different reasons, and are
+named here rather than passed over: **BUG-043** (no RTC — the
+clock is stale at boot until NTP corrects it) was closed `wont-fix` without being
+investigated, so its TLS-validity question is neither confirmed nor refuted; **BUG-044**
+(`StartLimitAction=reboot-force` escalating a flapping network) was investigated and its
+premise **refuted** — the start limit trips on the 6th attempt, which the watchdog cadence
+never reaches; and **BUG-057** (`mqtt-client` stalling in `AWS_IO_DNS_QUERY_FAILED` after a
+watchdog restart) is **fixed and merged but deliberately deferred to the next release**, so
+devices flashed from this image still carry it.*
+
 ### Changed
 
 - Device Node dependencies are now installed at a pinned version at first boot instead of unversioned. `stage2/04-cloud-init/files/user-data` resolved `aws-iot-device-sdk-v2`, `@ngrok/ngrok` and `@abandonware/bleno` from whatever npm `latest` happened to be on each device's first-boot day, so no two flashes were guaranteed the same tree and no release was reproducible — three bench devices carried two different `aws-crt` versions (1.33.1 and 1.32.1), the library that implements MQTT keep-alive and ping handling. They now install `aws-iot-device-sdk-v2@1.28.0`, `@ngrok/ngrok@1.7.0` and `@abandonware/bleno@0.6.2`, and the resulting set — including the transitively-fixed `aws-crt@1.33.1` — is recorded in `VERSIONS.md`, so a release tag identifies its dependency set without touching a device. Applies to newly flashed devices only; cloud-init `runcmd:` never re-runs on a provisioned device.
