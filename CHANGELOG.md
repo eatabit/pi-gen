@@ -49,6 +49,12 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Enable infinite WiFi autoconnect retries (`connection.autoconnect-retries=0`) for all WiFi profiles — devices in poor-signal locations would permanently disconnect after 4 failed reconnect attempts (NetworkManager default) and never recover without a reboot
 - Explicitly set `connection.autoconnect=true` on WiFi profiles created via BLE config and cloud-init to guard against profile corruption
 
+## [1.1.0] — 2026-03-29
+
+### Changed
+
+- Status LED moved from discrete common-cathode wiring to the LED hat PCB, which is common anode. The GPIOs are remapped from 17/22/27 to 9/10/11 (red 17 → 9, green 22 → 11, blue 27 → 10) and the logic inverted to active-low, with `config.txt`'s early-boot directive, `status-led.sh` and the documentation updated to match. This is the release that opened the 1.1.x hardware line, and it is the reason `hw/1.0` and `hw/1.1` differ in `stage1/00-boot-files/files/config.txt` and `stage3/11-install-status-led/files/status-led.sh` to this day.
+
 ## [1.0.6] — 2026-03-29
 
 ### Fixed
