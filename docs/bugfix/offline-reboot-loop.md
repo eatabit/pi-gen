@@ -120,6 +120,8 @@ repeated pre-readiness crashes, which is its correct purpose.
   design decision (rely on NM's infinite retries; reboot only for the post-connect SDK wedge). If
   field evidence later shows wedged-radio cases that only a reboot fixes, revisit with a
   network-aware escalation (TCP probe to the IoT endpoint) or a WiFi-layer rescan watchdog.
+  **→ That evidence arrived. See *Revisited: BUG-057* below — the gap was real, and the
+  premise behind accepting it was wrong.**
 
 ## Verification
 1. **Static:** `node --check` the edited `mqtt-client.js`; confirm `SdNotify.ready()` is called
@@ -143,3 +145,70 @@ repeated pre-readiness crashes, which is its correct purpose.
 - **Field note:** a device actively stuck in the loop is offline and cannot be SSH-patched; this
   fix reaches it only via reimage. There is no in-field patch for this change (it restructures
   `mqtt-client.js` startup), which is another reason it ships in the image rather than as a stopgap.
+
+---
+
+## Revisited: BUG-057 — the narrow gap was real, and the exit is now bounded
+
+**The "narrow gap" accepted above is exactly what stranded a field device for 41 hours.** The
+premise that made it acceptable was this document's own reasoning, preserved verbatim in the
+source comment it produced:
+
+> without a network the SDK can't connect (**and a fresh process couldn't either**), so exiting
+> would only feed the reboot loop.
+
+The parenthetical is false. It holds for a device with no network and fails for a **process-local
+wedge**, and the two are indistinguishable from inside the process. On device `00000000c3343f47`
+the `ClientBootstrap`'s CRT host resolver held a failed entry for the IoT endpoint; 4,919
+in-process retries over 41 hours all failed while the link, association and default route stayed
+up, and a fresh process — with a fresh bootstrap — connected in **1.4 s**. Measured across the
+same 417 h window: **115.3 h offline over 7 outages, 28% of the window**, every recovery a power
+cycle.
+
+Point 4 above — *"Leave the Layer 1 watchdog logic as-is. It only arms after a successful
+connect"* — is therefore **superseded**. That property was not a safe simplification; it was the
+defect. It also meant the watchdog could not arm in the process *created by* a watchdog restart,
+which is how a single wedge became permanent.
+
+### What changed
+
+| | Before | Now |
+|---|---|---|
+| Watchdog arming | `lastDisconnectedAt` only — never set on a never-connected process | also arms on a separate `neverConnectedSince` clock |
+| Initial-connect retry | fresh **connection** per attempt, one bootstrap for the process | fresh **bootstrap + client + config** per attempt |
+| Never-connected exit | never | after ~180 s, **bounded at `MAX_NEVER_CONNECTED_RESTARTS = 3`** |
+| Genuinely offline device | stays up, retries quietly | **unchanged** — 3 restarts, then stays up and retries quietly |
+
+### The offline guarantee this document exists to protect is preserved
+
+The bound is the whole point. An unbounded arm would restart an unprovisioned or genuinely
+offline unit **~450 times a day**, re-creating precisely the loop described in *Context*. The
+counter lives in `/run/eatabit/` (tmpfs, `RuntimeDirectoryPreserve=restart`), so it survives the
+restarts it counts and is cleared by a power cycle. After 3 exits the process stays up, keeps
+feeding `SdNotify.watchdog()`, keeps retrying every 30 s, and the unit stays `active` and
+BLE-provisionable.
+
+`lastDisconnectedAt` is **not** seeded at startup: `getHealthData()` reports it, and seeding it
+would report a disconnect that never happened.
+
+### Reboot is not the mechanism, and is not relied on
+
+Recovery here is the **restart** — a fresh process gets a fresh bootstrap and resolver. The
+watchdog samples every 60 s and fires past 150 s, so the exit is quantized to **180 s**; plus the
+3 s exit timer and `RestartSec=10`, one cycle is **~193 s**. Five starts need four gaps —
+4 × 193 = **772 s** against `StartLimitIntervalSec=600` — so `StartLimitBurst=5` is unreachable
+and `StartLimitAction=reboot-force` never fires on this path. Anyone lowering
+`MAX_DISCONNECT_DURATION_MS` to 120 s or below must redo that arithmetic; see the comment above
+`NEVER_CONNECTED_COUNT_FILE` in `mqtt-client.js`.
+
+### Residual gap, stated honestly
+
+Exhausting the budget does **not** strand the device: the 30 s retry loop keeps running and
+reconnects on its own when the fault clears. Verified on the bench — after `3/3` the unit stayed
+`active` and reconnected 4 minutes later when DNS was restored, with no power cycle and no
+reboot.
+
+What the budget gives up is further **restarts**, so the residual risk is narrow: a fault that a
+*fresh* process would clear but a running one will not. Distinguishing that from "no network"
+needs what *Context* originally proposed — a link/reachability probe independent of the SDK —
+rather than a restart budget. That is tracked as **ISSUE-004**.
