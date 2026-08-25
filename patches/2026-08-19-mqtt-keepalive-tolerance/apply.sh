@@ -62,6 +62,24 @@ ACCEPTED_PRIOR_SHAS=(
   "1d49a43a401d782bf9d72f69f2c9346c21405a17685185bdbd50f03986d60121" # output of 2026-08-20-ngrok-session-reclaim (== repo source at hw/1.0 and hw/1.1)
 )
 
+# --- SUPERSEDED: states this patch must NOT touch -----------------------------
+# ISSUE-065. A device whose mqtt-client.js is DOWNSTREAM of this patch's FIXED_SHA
+# already contains this fix plus later ones. It is not a prior and must never be
+# treated as one: ACCEPTED_PRIOR_SHAS means "install my payload over this", and this
+# patch's payload IS b009b68c -- so accepting a downstream sha would OVERWRITE newer
+# code with older, silently reverting whatever landed after it.
+#
+# That is not hypothetical. patches/ROLLOUT-LOG.md records device db996da7, where
+# 2026-06-30-offline-reboot-and-expired-job was declined by hand for exactly this
+# reason: "Applying it would have been a downgrade." An operator caught it. This list
+# is that catch, moved into the gate where it cannot be missed.
+#
+# Checked BEFORE the prior list, and exits 0: the device needs nothing.
+SUPERSEDED_SHAS=(
+  "4cafe4db9f942825c5ced68a83591a3ba9663140e6b7d0b5ca708cf866ba3c09" # ISSUE-068 logrotate/permissions
+  "7ecbf0ead594437934e3d0e501689a3bf99a1df77acdefb4369b57fc5655a34a" # ISSUE-068 shadow snapshots to tmpfs == image source at v1.0.11 / v1.1.5
+)
+
 # Informational only; the checksums above are the authoritative gate. 1.1.0 is listed
 # because bench device 0000000003c45d6d reports it while running head files -- a field
 # patch does not change VERSION. There is no v1.1.0 release tag.
@@ -245,7 +263,10 @@ do_check() {
   if [[ $js_sha == "$FIXED_SHA" ]]; then
     js_state=current
   else
-    for prior in "${ACCEPTED_PRIOR_SHAS[@]}"; do [[ $js_sha == "$prior" ]] && js_state=upgrade; done
+    for s in "${SUPERSEDED_SHAS[@]}"; do [[ $js_sha == "$s" ]] && js_state=superseded; done
+    if [[ $js_state != superseded ]]; then
+      for prior in "${ACCEPTED_PRIOR_SHAS[@]}"; do [[ $js_sha == "$prior" ]] && js_state=upgrade; done
+    fi
   fi
 
   printf 'patch          %s\n' "$PATCH_ID"
@@ -262,6 +283,11 @@ do_check() {
       printf 'RESULT         WOULD APPLY -- file is patched but the apply never completed\n'
       printf '               (no marker); a real run would restart %s to finish it\n' "$SERVICE"
       return 2 ;;
+    superseded)
+      printf 'RESULT         NO-OP -- device is AHEAD of this patch and already has this fix\n'
+      printf '               (its mqtt-client.js is downstream of %s).\n' "${FIXED_SHA:0:16}"
+      printf '               Applying would DOWNGRADE it. Nothing would be modified.\n'
+      return 0 ;;
     upgrade) printf 'RESULT         WOULD APPLY -- installs mqtt-client.js, then ONE mqtt-client restart\n'; return 2 ;;
     *)       printf 'RESULT         WOULD REFUSE -- unrecognized mqtt-client.js; nothing would be modified\n'; return 1 ;;
   esac
@@ -300,6 +326,18 @@ do_apply() {
     run_detached_if_ssh __finalize_apply "$v"
     exit 0
   fi
+
+  # ISSUE-065: superseded BEFORE prior. A downstream device already has this fix; applying
+  # the payload would overwrite newer code with older. Exit 0 -- there is nothing to do and
+  # nothing is wrong.
+  for s in "${SUPERSEDED_SHAS[@]}"; do
+    if [[ $js_sha == "$s" ]]; then
+      log "mqtt-client.js is DOWNSTREAM of this patch (sha $js_sha)."
+      log "The device already carries this fix and later ones -- applying would DOWNGRADE it."
+      log "Nothing to do."
+      exit 0
+    fi
+  done
 
   is_accepted=0
   for prior in "${ACCEPTED_PRIOR_SHAS[@]}"; do [[ $js_sha == "$prior" ]] && is_accepted=1; done
