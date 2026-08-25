@@ -181,10 +181,109 @@ due 2026-08-26 00:29:37Z.
 
 **BUG-057 ratio: 616 / 598 = 1.03:1** — healthy self-recovering profile (see finding 4).
 
+#### ISSUE-068 closed end-to-end — `3e83bb41`, later the same day
+
+| Device | Patch | Applied | Evidence |
+|---|---|---|---|
+| `3e83bb41` | ble-config-permissions | `2026-08-25T03:17:50+00:00` | js `d70edf02`→`a912dda0`; `0o777`×3→0, `0o666`×3→0; PID 15637→17041; mqtt-client untouched |
+| `3e83bb41` | app-permissions-and-shadow-churn | `2026-08-25T03:19:42+00:00` (marker `03:20:05`) | js `b009b68c`→`7ecbf0ea`; 3 snapshots retired to `/run/eatabit`, 0 left on card; PID 15988→17651; DNS guard 5/5; reconnected ~10 s |
+
+Second device in the fleet with all three ISSUE-068 patches, and **ten patches total**.
+
+**Churn baseline before the fix:** 96 health persists/day (2026-08-22/23/24: 96 / 115 / 96)
+× 1657 B = **155.3 KiB/day**; **13,646** lifetime on-card rewrites — more than `96a39148`'s
+8,792, this device having logged longer.
+
+**BUG-039 held:** ready flag kept its `2026-08-23 22:10:36` mtime across a service start at
+`03:20:02`. Verified without a test print.
+
+**`ble-config` came back functional, not merely `active`** — `Advertising started` → `GATT
+services configured` → `BLE advertising started successfully` at 03:17:48. Worth checking
+explicitly: BLE advertising *is* the provisioning path and the only way back into a device
+that has lost WiFi, so "unit is active" is not sufficient evidence.
+
 **Two log-hygiene observations, not actioned:** `mqtt-client.log` contains **binary data**
 (first NUL at offset 4,511,090), and holds **28** cleartext `authToken` occurrences — the
 latter already noted in `BUG-049/artifacts/bug049-issue064-customer-device-2026-08-20.md`
 as a candidate for its own record. The file was mode `644`, i.e. world-readable.
+
+---
+
+### ISSUE-068 closed end-to-end — `19dffb8b`, 2026-08-25
+
+**v1.0.2, hw/1.0** — the first ISSUE-068 closure on the *other* hardware line. Ten patches.
+
+| Device | Patch | Applied | Evidence |
+|---|---|---|---|
+| `19dffb8b` | log-permissions-and-rotation | `2026-08-25T03:27:22+00:00` | dirs `777`→`755`; stanza `create 0666`→`0644`; **`eatabit-ble-config` stanza absent → installed**; MainPID 3232 unchanged |
+| `19dffb8b` | ble-config-permissions | `2026-08-25T03:27:26+00:00` | js `4654037f`→`999d9a98`; `0o777`×3→0, `0o666`×3→0; PID 2962→8129 |
+| `19dffb8b` | app-permissions-and-shadow-churn | `2026-08-25T03:27:47+00:00` (marker `03:28:10`) | js `b009b68c`→`7ecbf0ea`; 3 snapshots retired to `/run/eatabit`, 0 on card; PID 3232→8501; DNS guard 5/5 |
+
+**ISSUE-068 was live, not theoretical:** `logrotate.service` was failing at 00:56:34 that
+morning — `Result=exit-code`, `ExecMainStatus=1` — with the explicit *"skipping … because
+parent directory has insecure permissions"*. `mqtt-client.log` stood at **4.7 MB**, never
+rotated, **zero** `.1`/`.gz` siblings, **no logrotate state entry**. After: 0 complaints on
+both stanzas.
+
+**Churn baseline:** 96 persists/day × 1692 B = **158.6 KiB/day**.
+
+**BUG-039 held:** ready flag kept its `2026-08-24 19:31:05` mtime across a start at
+`03:28:07`.
+
+**BUG-057 ratio: 22 fails / 3,218 fires** — the healthiest profile measured in the fleet.
+
+---
+
+### `ble-config.js` — three distinct variants observed in the field
+
+The patch enumerates five released variants and asserts each against **its own** end state.
+Three have now been seen on real hardware, which is why a single accepted prior would have
+been wrong:
+
+| Prior sha | Result sha | Seen on | Version |
+|---|---|---|---|
+| `ecbf9a06…` | `fff83fb7…` | `96a39148` | v1.1.1 |
+| `d70edf02…` | `a912dda0…` | `3e83bb41` | v1.1.0 |
+| `4654037f…` | `999d9a98…` | `19dffb8b` | v1.0.2 (hw/1.0) |
+
+A device is "already fixed" only against its own variant's end state, never another
+release's. The enumeration is load-bearing, not defensive padding.
+
+---
+
+### `9bd9c6e4` — stranded, and a failure mode not previously seen
+
+Asked on 2026-08-25 whether it carries `2026-08-20-ngrok-session-reclaim`. **It does not**,
+and it cannot be given it remotely.
+
+- **2026-08-20 fleet survey** (`BUG-049/artifacts/fleet-survey-2026-08-20/raw-sweep.tsv:12`)
+  recorded exit **2 — `WOULD APPLY`**, js `2f8848db` `[upgrade]`, unit `e92b2a15` `[upgrade]`.
+- `bug049-second-cut-field-regression-2026-08-20.md` lists it **Stranded** — *"Superseded
+  build, cannot tunnel, so cannot receive the fix. Needs on-site access."*
+- **No `mqtt-client` restart since**: health shadow reports `restartCount: 0` with
+  `mqttClient.lastTimestamp = Thu 2026-08-20 19:07:24 BST`, matching uptime and the IoT
+  connectivity timestamp `18:07:36 UTC`. That boot is the documented BUG-049-clearing
+  reboot. Applying reclaim requires exactly one restart, so the window is closed on both
+  sides.
+- Still reports **BST**, so it never took `gateway-timezone-utc` — no campaign session has
+  touched it.
+
+**New failure mode, distinct from the existing taxonomy.** The 2026-08-25 tunnel attempt
+returned:
+
+```
+504 -- "ngrok session connect timed out after 15000 ms"
+```
+
+That is **not** BUG-048 (`$NO_RESPONSE_FROM_DEVICE`), **not** the BUG-049 wedge (`Failed to
+establish tunnel`), and **not** the `500 ERR_NGROK_107` seen on `edec02ad`. The device
+*answered* — it accepted the command and attempted the tunnel — so MQTT is healthy and the
+outbound ngrok session is what fails. Consistent with the 811 s connect time recorded for
+this device in August, which that artifact already called *"something more specific"* than
+a poor link.
+
+It would upgrade in place the moment a tunnel works: js `2f8848db…` is an accepted prior.
+**Still needs the site visit.**
 
 ---
 
@@ -339,10 +438,27 @@ does not enforce that stated exclusion, and in practice v1.1.1 devices are in sc
    end to end and are done. Use the predicate in operational note 11, not `Result` alone.
    `stat -c%y /var/hdd.log/log2ram.log` should read 2026-08-24 13:00+, not 2026-08-05.
 3. **Patches still missing per device:**
-   - `3e83bb41` — keepalive, log2ram, ble-classic-scan-off (only timezone applied)
-   - `92f7766c` — **complete** (6 patches) as of 2026-08-24T16:22Z
+   - `3e83bb41` — **complete** (10 patches, ISSUE-068 closed) as of 2026-08-25T03:20Z
+   - `19dffb8b` — **complete** (10 patches, ISSUE-068 closed) as of 2026-08-25T03:28Z
+   - `96a39148` — **complete** (10 patches, ISSUE-068 closed) as of 2026-08-25T02:11Z
+   - `92f7766c` — 6 patches; ISSUE-068 trio outstanding (needs log-permissions,
+     ble-config-permissions, app-permissions)
+   - `9bd9c6e4` — **unreachable**; still at the 2026-08-20 state. Needs a site visit,
+     not a patch session. See its section above.
    - `cce04a18` (bench) — gateway-timezone-utc; still `Europe/London`, so its hourly
      log2ram schedule skips one slot at the spring DST transition
+
+4. **First log2ram sync on `3e83bb41`** — patch applied 2026-08-25T03:09:32Z, timer set for
+   04:00Z; **not observed** (tunnel closed first). Pre-patch gap was 73,056 B (775,515 vs
+   702,459) and should collapse to ~119 B. Use the predicate in operational note 11.
+   `19dffb8b` needs no check — its sync ran at 03:00:04Z that morning, before patching.
+
+5. **First log rotation on `3e83bb41` and `19dffb8b`** — both had `logrotate.service`
+   failing with `ExecMainStatus=1` until 2026-08-25, so neither log has *ever* rotated
+   (10.7 MB and 4.7 MB respectively). `logrotate --debug` now reports 0 complaints on both,
+   but **that is not proof it rotates** — the first real run is the proof. `3e83bb41`'s
+   `logrotate.timer` next fires 2026-08-26T00:29:37Z. Confirm `.1`/`.gz` siblings appear
+   and a `/var/lib/logrotate/status` entry is created.
 
 ### Findings raised, not yet actioned
 
@@ -361,6 +477,8 @@ does not enforce that stated exclusion, and in practice v1.1.1 devices are in sc
    | `c3343f47` | 13,840 | 12 | **1153:1** | 115.3 h offline / 7 outages; power-cycle recovery |
    | `42288e07` | 5,131 | 91 | **56:1** | stalls, does not self-clear |
    | `96a39148` | 292 | 223 | **1.3:1** | watchdog clears each run |
+   | `3e83bb41` | 616 | 598 | **1.03:1** | watchdog clears each run |
+   | `19dffb8b` | 22 | 3,218 | **0.007:1** | healthiest measured; fires vastly exceed failures |
 
    A ratio near **1:1 is the healthy profile** — failures occur and are recovered — whereas
    the pathology is thousands of failures accumulating against a handful of fires. So a bare
@@ -585,14 +703,25 @@ does not enforce that stated exclusion, and in practice v1.1.1 devices are in sc
 25. **Three documentation defects in `2026-08-23-app-permissions-and-shadow-churn`**, found
     while applying it to `96a39148` (2026-08-25). The `apply.sh` is correct in all three
     cases; only the prose is wrong.
-    - **The version-exclusion claim is false, and `96a39148` disproves it.** The README and
-      `apply.sh`'s refusal text (~line 252) both state a device on *"v1.0.1–v1.0.7, v1.1.0
-      or v1.1.1 CANNOT enter the lineage and so cannot take this patch at all."* `96a39148`
-      is **v1.1.1** and took it cleanly. The rule governs *stock* shas, not version strings:
-      a v1.1.1 that has already run `watchdog-exit-hang` and `2026-06-30` carries an
-      accepted prior sha and enters normally. As written, the message will cause an operator
-      to abandon a patchable device. (Consistent with finding 8 and the `KNOWN_VERSIONS`
-      note in the BUG-057 patch: v1.1.0 is a real tag, `3772bd8`.)
+    - **The version-exclusion claim is false — now disproved THREE times, on BOTH hardware
+      lines.** The README and `apply.sh`'s refusal text (~line 252) both state a device on
+      *"v1.0.1–v1.0.7, v1.1.0 or v1.1.1 CANNOT enter the lineage and so cannot take this
+      patch at all."* Every one of those three bands has since taken the patch cleanly:
+
+      | Device | Version | Line | Claimed |
+      |---|---|---|---|
+      | `96a39148` | v1.1.1 | hw/1.1 | excluded |
+      | `3e83bb41` | v1.1.0 | hw/1.1 | excluded |
+      | `19dffb8b` | **v1.0.2** | **hw/1.0** | excluded |
+
+      The rule governs *stock* shas, not version strings: a device that has already run
+      `watchdog-exit-hang` and `2026-06-30` carries an accepted prior sha and enters
+      normally regardless of its version. As written, the message will cause an operator to
+      abandon a patchable device — and `19dffb8b` shows the claim is wrong on the hw/1.0
+      line too, not merely on hw/1.1. **`KNOWN_VERSIONS` should include 1.0.2, 1.1.0 and
+      1.1.1**, and the refusal text should be rewritten to talk about shas. (Consistent
+      with finding 8 and the `KNOWN_VERSIONS` note in the BUG-057 patch: v1.1.0 is a real
+      tag, `3772bd8`.)
     - **The Payloads table and Gates section still describe `ble-config.js`** — five
       variants with prior/fixed shas — but no `ble-config.js` ships in that directory and
       `apply.sh` is `mqtt-client.js`-only. Stale text left by the deliberate split into
@@ -613,3 +742,48 @@ does not enforce that stated exclusion, and in practice v1.1.1 devices are in sc
     contradicts the convergence property the payload tables otherwise guarantee. Low
     severity (root-owned; logrotate does not read them), but it means "ISSUE-068 closed on a
     device" currently means *directories and creation modes*, not *all file modes*.
+
+27. **ngrok recycles `host:port` across devices — verify the DEVICE, never the address.** On
+    2026-08-25 the reconnect after patching `19dffb8b` returned `0.tcp.ngrok.io:20867`, the
+    **exact address `3e83bb41` had been on earlier the same session**. Both devices were in
+    flight at the time. Verifying against the address alone would have reported one
+    device's state as the other's. What caught it was a `cat /usr/local/lib/eatabit/version`
+    at the top of the verification block (`1.0.2` vs `1.1.0`).
+
+    **Make an identity assertion the first line of every post-reconnect check** — version,
+    or `hardware_id` where present. The hazard was already known in a milder form
+    (`REMOTE HOST IDENTIFICATION HAS CHANGED` from stale `known_hosts`, noted in
+    `BUG-049/artifacts/bug049-issue064-customer-device-2026-08-20.md`); this is the same
+    recycling with a worse failure mode, because it is **silent** — no warning fires when
+    the address is reused by a device you also have legitimate access to.
+
+    Note `/usr/local/lib/eatabit/hardware_id` does **not** exist on every device (absent on
+    `19dffb8b` and `3e83bb41`, where the check falls back to `hostname`, which is `eatabit`
+    on all of them and therefore useless). Use the version file, or the thing name from the
+    shadow.
+
+28. **BUG-035 keeps climbing, and a `mqtt-client` restart is a second orphan source.**
+    Audit of every `DeviceCommand` row for 2026-08-25: `96a39148` 2 starts / 1 stop,
+    `3e83bb41` 3 starts / 1 stop, `19dffb8b` 2 starts / 1 stop, `9bd9c6e4` 1 failed start.
+    Roughly **five** new orphan credentials in one session, on top of the 31 in finding 16.
+
+    Two distinct sources, and only one was previously recorded:
+    - **Finding 16's path** — a credential minted *before* dispatch, so a device that never
+      answers leaves an orphan (`9bd9c6e4`'s failed attempt did exactly this).
+    - **New: any patch that restarts `mqtt-client`** kills the tunnel without a
+      `stopNgrokTunnel` ever running, so delete-on-stop never fires. Every application of
+      `mqtt-keepalive-tolerance` or `app-permissions-and-shadow-churn` leaks one by
+      construction. This is inherent to the detached-apply pattern, not operator error.
+
+    The 24 h reaper should clear them, but **nothing has been observed actually reclaiming
+    one**, and the count has only ever gone up across this campaign.
+
+29. **Two log-hygiene defects, seen on `3e83bb41` and worth their own record.**
+    `mqtt-client.log` contains **binary data** — first NUL byte at offset 4,511,090 in an
+    11.2 MB file, enough that `grep` switches to "binary file matches" and silently stops
+    printing (every `grep` in a verification script needs `-a`, or it will under-report).
+    The same file holds **28 cleartext `authToken` occurrences** at mode `644`. The
+    cleartext half is already flagged in
+    `BUG-049/artifacts/bug049-issue064-customer-device-2026-08-20.md` as *"candidate for
+    its own record"*; the binary contamination is new and unexplained. Both survive
+    reboots, and until 2026-08-23 neither could ever be rotated away.
