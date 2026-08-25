@@ -63,7 +63,7 @@ ACCEPTED_PRIOR_SHAS=(
 # means "install my payload over this", and this patch's payload IS 2f8848db -- so
 # accepting a downstream sha would OVERWRITE newer code with older.
 #
-# Recorded in docs/ROLLOUT-LOG.md against device db996da7, where this very patch was
+# Recorded in the fleet rollout log (iot-doc/ops/Pi-Rollout-Log.md) against device db996da7, where this very patch was
 # declined by hand: "Applying it would have been a downgrade." That judgement now lives
 # in the gate instead of relying on an operator to make it again.
 SUPERSEDED_SHAS=(
