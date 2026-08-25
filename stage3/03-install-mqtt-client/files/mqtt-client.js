@@ -802,105 +802,6 @@ let lastConnectedAt = null;
 let lastDisconnectedAt = null;
 let watchdogTriggerCount = 0;
 
-// BUG-057: never-connected restart budget.
-//
-// A process that has never connected cannot arm the Layer 1 watchdog below.
-// lastDisconnectedAt is assigned ONLY by the interrupt and disconnect handlers,
-// which a never-connected process never runs, so `!isConnected && lastDisconnectedAt`
-// was false in exactly the state that strands a device. Meanwhile SdNotify.watchdog()
-// is fed unconditionally, so systemd saw a healthy process -- a well-fed zombie, alive
-// and permanently offline. Measured in the field on one device: 13,840 consecutive
-// AWS_IO_DNS_QUERY_FAILED retries, the longest run 4,919 over 41 hours, and every one
-// of 7 recoveries a power cycle.
-//
-// neverConnectedSince arms the watchdog for that case. It is deliberately a SEPARATE
-// clock from lastDisconnectedAt: getHealthData() reports lastDisconnectedAt, and
-// seeding that at startup would report a disconnect that never happened, making
-// "never connected" indistinguishable from a real drop in the health shadow.
-//
-// THE EXIT IS BOUNDED, and that is not optional. v1.0.10 removed the
-// exit-on-failed-initial-connect precisely because an unprovisioned or genuinely
-// offline device would restart forever, wearing the SD card, fighting BLE
-// provisioning and reprinting the ready receipt (docs/bugfix/offline-reboot-loop.md).
-// An unbounded arm restarts such a unit ~450 times a day. The two cases look
-// identical from inside this process but need opposite responses:
-//
-//   no network at all    -> a fresh process cannot help -> wait quietly
-//   process-local wedge  -> a fresh process DOES help   -> restart
-//
-// N = 3 covers the wedge (every observed stall cleared on the FIRST fresh process)
-// and then goes quiet, which is what a device with no network actually needs.
-//
-// ARITHMETIC -- anyone changing MAX_DISCONNECT_DURATION_MS must redo this.
-// The watchdog samples every WATCHDOG_INTERVAL_MS (60 s) and fires when elapsed
-// exceeds MAX_DISCONNECT_DURATION_MS (150 s), so the exit is QUANTIZED to the first
-// 60 s tick past the threshold: 180 s, not 150 s. Plus the 3 s belt-and-braces
-// setTimeout below and RestartSec=10, one cycle is ~193 s. Five starts need FOUR
-// gaps: 4 x 193 = 772 s against StartLimitIntervalSec=600, so StartLimitBurst=5 is
-// UNREACHABLE and StartLimitAction=reboot-force never fires. Recovery here is the
-// RESTART -- a fresh process gets a fresh ClientBootstrap and therefore a fresh host
-// resolver -- not the reboot. The cycle is always 60k+13 s, so fitting 5 starts into
-// 600 s needs a cycle <= 150 s, i.e. k <= 2, reachable only if
-// MAX_DISCONNECT_DURATION_MS drops to 120 s or below. At 150 s, k = 3 and the margin
-// is 43 s. N = 3 makes that guarantee structural rather than incidental: 3 exits can
-// never approach burst 5 even if the margin evaporates.
-//
-// HONEST LIMIT: exhausting the budget does not strand the device -- the 30 s retry
-// loop keeps running and reconnects on its own when the fault clears (verified on the
-// bench: after 3/3 the unit stayed active and reconnected 4 min later when DNS
-// returned). What the budget gives up is further RESTARTS, so the residual risk is
-// narrow: a fault that a FRESH process would clear but a running one will not. Telling
-// that case apart from "no network" needs a link/reachability probe rather than a
-// restart budget -- that is ISSUE-004's job.
-//
-// The counter lives in the same /run/eatabit tmpfs as DEVICE_READY_FLAG above, for the
-// same reasons: RuntimeDirectoryPreserve=restart carries it across the very exits it
-// counts, while a genuine reboot or power cycle clears it -- a human intervening
-// resets the budget, which is right. /tmp (PrivateTmp, BUG-039) and
-// /usr/local/lib/eatabit/log (log2ram, BUG-041) are both wrong here for exactly the
-// reasons given above DEVICE_READY_FLAG.
-const NEVER_CONNECTED_COUNT_FILE = "/run/eatabit/never-connected-restarts";
-const MAX_NEVER_CONNECTED_RESTARTS = 3;
-let neverConnectedSince = Date.now();
-let neverConnectedRestarts = readNeverConnectedRestarts();
-let neverConnectedBudgetLogged = false;
-
-function readNeverConnectedRestarts() {
-  try {
-    const n = parseInt(
-      fs.readFileSync(NEVER_CONNECTED_COUNT_FILE, "utf8").trim(),
-      10,
-    );
-    return Number.isInteger(n) && n >= 0 ? n : 0;
-  } catch (_) {
-    return 0;
-  }
-}
-
-function bumpNeverConnectedRestarts() {
-  neverConnectedRestarts += 1;
-  try {
-    fs.writeFileSync(
-      NEVER_CONNECTED_COUNT_FILE,
-      String(neverConnectedRestarts),
-    );
-  } catch (err) {
-    log(
-      `Failed to persist never-connected restart count: ${err.message}`,
-      "WARN",
-    );
-  }
-  return neverConnectedRestarts;
-}
-
-function clearNeverConnectedRestarts() {
-  neverConnectedRestarts = 0;
-  neverConnectedBudgetLogged = false;
-  try {
-    fs.unlinkSync(NEVER_CONNECTED_COUNT_FILE);
-  } catch (_) {}
-}
-
 // Helper function to publish events
 async function publishEvent(eventType, eventData) {
   if (!mqttConnection) {
@@ -1321,72 +1222,28 @@ function printDocument(jobId) {
 }
 
 async function main() {
-  // BUG-057: the ClientBootstrap owns the CRT host resolver, so it is rebuilt for
-  // every initial-connect attempt -- together with the client and the config it
-  // feeds -- rather than being built once for the life of the process.
-  //
-  // The previous fix rebuilt the CONNECTION per attempt (see createConnection below)
-  // and stopped one layer short. Once this bootstrap's resolver held a failed entry
-  // for the IoT endpoint, every subsequent connect() on it inherited that failure:
-  // 4,919 in-process retries over 41 hours all failed on a device whose network was
-  // up the whole time, while a fresh PROCESS -- and therefore a fresh bootstrap --
-  // connected in 1.4 s. Rebuilding here is what makes the retry loop meaningfully
-  // different from the attempt before it.
-  let clientBootstrap;
-  let config;
-  let client;
+  const clientBootstrap = new io.ClientBootstrap();
 
-  function rebuildClientStack() {
-    const previousBootstrap = clientBootstrap;
-    const previousClient = client;
+  const configBuilder =
+    iot.AwsIotMqttConnectionConfigBuilder.new_mtls_builder_from_path(
+      DEVICE_CERT,
+      DEVICE_KEY,
+    );
 
-    clientBootstrap = new io.ClientBootstrap();
+  configBuilder.with_certificate_authority_from_path(undefined, ROOT_CA);
+  configBuilder.with_endpoint(ENDPOINT);
+  configBuilder.with_client_id(DEVICE_ID);
+  configBuilder.with_clean_session(false);
+  configBuilder.with_keep_alive_seconds(30);
+  // BUG-045: the AWS CRT default PINGRESP window is 3000 ms, which is what makes a single
+  // LATE PINGRESP tear down a connection whose link layer never faltered. 10 s absorbs
+  // ordinary 2.4 GHz airtime contention while staying well under keep_alive (the SDK
+  // requires ping_timeout < keep_alive). Cost: genuine-offline detection 33 s -> 40 s,
+  // still far below MAX_DISCONNECT_DURATION_MS (150 s). See iot-doc BUG-045.
+  configBuilder.with_ping_timeout_ms(10_000);
 
-    const configBuilder =
-      iot.AwsIotMqttConnectionConfigBuilder.new_mtls_builder_from_path(
-        DEVICE_CERT,
-        DEVICE_KEY,
-      );
-
-    configBuilder.with_certificate_authority_from_path(undefined, ROOT_CA);
-    configBuilder.with_endpoint(ENDPOINT);
-    configBuilder.with_client_id(DEVICE_ID);
-    configBuilder.with_clean_session(false);
-    configBuilder.with_keep_alive_seconds(30);
-    // BUG-045: the AWS CRT default PINGRESP window is 3000 ms, which is what makes a single
-    // LATE PINGRESP tear down a connection whose link layer never faltered. 10 s absorbs
-    // ordinary 2.4 GHz airtime contention while staying well under keep_alive (the SDK
-    // requires ping_timeout < keep_alive). Cost: genuine-offline detection 33 s -> 40 s,
-    // still far below MAX_DISCONNECT_DURATION_MS (150 s). See iot-doc BUG-045.
-    configBuilder.with_ping_timeout_ms(10_000);
-
-    config = configBuilder.build();
-    client = new mqtt.MqttClient(clientBootstrap);
-
-    // Release the discarded pair IF the installed aws-crt exposes a teardown. The SDK
-    // is unpinned and not vendored here -- devices in the field carry 1.32.1 and
-    // 1.33.1 (ISSUE-067) -- so this is a runtime surface check, never a version gate.
-    // Rebuilds are bounded by MAX_NEVER_CONNECTED_RESTARTS regardless, so a resource
-    // the runtime declines to release cannot accumulate without limit.
-    for (const [label, obj] of [
-      ["MqttClient", previousClient],
-      ["ClientBootstrap", previousBootstrap],
-    ]) {
-      if (!obj) continue;
-      try {
-        if (typeof obj.close === "function") {
-          obj.close();
-        } else if (typeof obj.destroy === "function") {
-          obj.destroy();
-        }
-      } catch (err) {
-        log(
-          `Discarding previous ${label} failed (non-fatal): ${err.message}`,
-          "WARN",
-        );
-      }
-    }
-  }
+  const config = configBuilder.build();
+  const client = new mqtt.MqttClient(clientBootstrap);
 
   // Build a FRESH connection (with handlers) for each connect attempt. Reusing one
   // connection object across failed connect() retries — e.g. during the offline
@@ -1407,11 +1264,6 @@ async function main() {
     connection.on("connect", async () => {
     isConnected = true;
     lastConnectedAt = Date.now();
-    // BUG-057: this process has now connected, so the never-connected watchdog arm
-    // is disarmed and the restart budget is returned in full. A later drop is the
-    // interrupt/disconnect path, which is bounded by nothing and must not be.
-    neverConnectedSince = null;
-    clearNeverConnectedRestarts();
     log("Connected to AWS IoT Core");
     setStatusLedConnected();
 
@@ -2315,27 +2167,9 @@ async function main() {
     watchCutterConfigFile();
     watchVolumeConfigFile();
 
-    // Initial connect is non-fatal and retried in the background: a failed attempt
-    // does not exit here, and the service stays started so an unprovisioned or
-    // offline device is not reboot-looped by StartLimitAction=reboot-force.
-    //
-    // BUG-057 corrected the reasoning this block used to carry. It said a fresh
-    // process "couldn't either" connect without a network -- true for a device with
-    // no network, FALSE for a process-local wedge, and the difference is invisible
-    // from in here. A poisoned CRT host resolver made every in-process retry fail for
-    // 41 hours on a device whose link, association and default route were all up; a
-    // fresh process connected in 1.4 s. Two cases, opposite correct responses:
-    //
-    //   no network at all    -> a fresh process cannot help -> wait quietly
-    //   process-local wedge  -> a fresh process DOES help   -> restart
-    //
-    // Both are now served. Change B rebuilds the ClientBootstrap per attempt so a
-    // poisoned resolver cannot survive a retry (rebuildClientStack above), and the
-    // Layer 1 watchdog below arms on neverConnectedSince and exits -- BOUNDED at
-    // MAX_NEVER_CONNECTED_RESTARTS, after which this loop keeps running quietly and
-    // the unit stays active and BLE-provisionable. See the block above
-    // NEVER_CONNECTED_COUNT_FILE for the full reasoning and the restart arithmetic.
-    //
+    // Initial connect is non-fatal and retried in the background. We do NOT
+    // process.exit(1) on failure: without a network the SDK can't connect (and a
+    // fresh process couldn't either), so exiting would only feed the reboot loop.
     // Once connected, the SDK's own interrupt/resume backoff handles later drops,
     // and the Layer 1 watchdog below recovers a post-connect wedge via a restart.
     //
@@ -2347,11 +2181,6 @@ async function main() {
     let subscribed = false;
     async function attemptInitialConnect() {
       while (!subscribed) {
-        // BUG-057: fresh BOOTSTRAP, client and config every attempt -- the bootstrap
-        // owns the host resolver, so reusing one whose resolver failed made every
-        // retry inherit that failure. This must come before createConnection(),
-        // which reads the client and config it rebuilds.
-        rebuildClientStack();
         // Fresh connection + handlers every attempt — never reuse one whose
         // connect() failed (that's what left the device connected-but-deaf after a
         // factory-reset re-provision). See the createConnection comment above.
@@ -2398,34 +2227,8 @@ async function main() {
       // Layer 2: Send systemd watchdog ping unconditionally (process liveness)
       SdNotify.watchdog();
 
-      // BUG-057: a never-connected process has no lastDisconnectedAt -- neither the
-      // interrupt nor the disconnect handler has run -- which left this guard
-      // unreachable in exactly the state that strands a device. Fall back to
-      // neverConnectedSince. lastDisconnectedAt is NOT seeded, so health telemetry
-      // keeps reporting null for a process that has genuinely never connected.
-      const neverConnected = lastDisconnectedAt === null;
-      const since = lastDisconnectedAt ?? neverConnectedSince;
-
-      if (!isConnected && since) {
-        // Budget spent: stop exiting. Stay up, keep retrying every 30 s, and keep
-        // feeding SdNotify.watchdog() above. The unit stays active and the device
-        // stays BLE-provisionable -- the v1.0.10 guarantee for a device that really
-        // has no network. Logged once, not once a minute.
-        if (
-          neverConnected &&
-          neverConnectedRestarts >= MAX_NEVER_CONNECTED_RESTARTS
-        ) {
-          if (!neverConnectedBudgetLogged) {
-            log(
-              `Never-connected restart budget exhausted (${neverConnectedRestarts}/${MAX_NEVER_CONNECTED_RESTARTS}); staying up and retrying every 30s without further restarts`,
-              "ERROR",
-            );
-            neverConnectedBudgetLogged = true;
-          }
-          return;
-        }
-
-        const disconnectedMs = Date.now() - since;
+      if (!isConnected && lastDisconnectedAt) {
+        const disconnectedMs = Date.now() - lastDisconnectedAt;
         log(`Watchdog check: disconnected for ${disconnectedMs}ms`, "WARN");
 
         if (disconnectedMs > MAX_DISCONNECT_DURATION_MS) {
@@ -2434,16 +2237,6 @@ async function main() {
             "ERROR",
           );
           watchdogTriggerCount++;
-
-          // Spend one unit of the never-connected budget. The post-connect path
-          // (lastDisconnectedAt set) is deliberately unbounded and untouched.
-          if (neverConnected) {
-            const used = bumpNeverConnectedRestarts();
-            log(
-              `Never-connected restart ${used}/${MAX_NEVER_CONNECTED_RESTARTS}`,
-              "WARN",
-            );
-          }
 
           // The MQTT publish promise can hang forever when the SDK is wedged —
           // awaiting it before process.exit() left devices stuck for 18h in the
