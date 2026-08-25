@@ -125,15 +125,25 @@ the fix is complete rather than half-applied.
 | `96a39148` | ble-config-permissions | `2026-08-25T02:05:09+00:00` | js `ecbf9a06`→`fff83fb7`; `0o777`×3→0, `0o666`×3→0; `ble-config` PID 7044→44990 |
 | `96a39148` | app-permissions-and-shadow-churn | `2026-08-25T02:10:59+00:00` | js `b009b68c`→`7ecbf0ea`; 8 sites (`0o755`×5 + `0o644`×3); 3 snapshots retired to `/run/eatabit`; PID 28480→45656; DNS guard 5/5; reconnected in **5 s** |
 
-**The pair is proven on hardware, not merely asserted.** `ble-config` genuinely restarted
-(PID 7044 → 44990) and the directories **stayed `755`**. With the pre-patch js that restart
-would have re-created them `0777` and silently undone the companion — which is exactly the
-"neither is sufficient alone" claim in both READMEs, now demonstrated rather than argued.
+**`ble-config` genuinely restarted** (PID 7044 → 44990) and the directories **stayed
+`755`**.
 
-The recreation window did **not** bite here only because `ble-config` had not restarted
-since 2026-08-21, so nothing reverted the directories in the 5 minutes between the two
-patches. **On a device where `ble-config` restarts more often, apply the two in immediate
-succession.**
+> **CORRECTION (2026-08-25).** An earlier version of this entry read that the pre-patch js
+> "would have re-created them `0777`" on that restart, and called the pair proven by it.
+> **That was wrong.** Every `0o777` mkdir in both `ble-config.js` and `mqtt-client.js` is
+> guarded by `if (!fs.existsSync(dir))` — verified on `3e83bb41`, `ble-config.js:176-177`
+> and `mqtt-client.js:68,355,405,890,1920`. A restart with the directories **present**
+> reverts nothing, so this restart does not demonstrate the pair. The patch READMEs are
+> worded correctly — *"one service start against an **absent** directory"* — and the
+> paraphrase dropped the condition.
+
+**The recreation window is narrower than the ordering advice implies.** Because the
+`0o777` mkdirs are create-if-missing, the directories revert only when they are **absent**
+— a wipe, a factory reset, or manual cleanup — not on an ordinary service restart. So the
+companion patch is not silently undone by restarts, and the two need not be applied in
+immediate succession. `ble-config-permissions` remains necessary for the case the guard
+does not cover: a device whose directories are ever removed, and any device reflashed from
+an image predating the fix.
 
 **Churn eliminated, measured before it was destroyed:** `96a39148` logged **96 health
 persists/day** (2026-08-22/23/24: 96 / 102 / 96) at 1714 B each = **160.7 KiB/day** to the
@@ -143,6 +153,40 @@ card, independently confirming the patch README's ~159 KiB/day. Lifetime on-card
 **BUG-039 held across the `mqtt-client` restart** — `/run/eatabit/device-ready-printed` kept
 its original `2026-08-21 18:24:45` mtime via `RuntimeDirectoryPreserve=restart`, so no
 duplicate ready receipt printed. Verified without a test print (see finding 13).
+
+### `3e83bb41` — 2026-08-25
+
+Brought from timezone-only to seven patches. v1.1.0, hw/1.1.
+
+| Device | Patch | Applied | Evidence |
+|---|---|---|---|
+| `3e83bb41` | log2ram-timer-hourly-sync | `2026-08-25T03:09:32+00:00` | timer `disabled`→`enabled`; `hourly.conf` `2ab148d1`; **MainPID 1434 unchanged**; pre-patch gap 73,056 B (775,515 vs 702,459); **first sync at 04:00Z NOT yet verified** |
+| `3e83bb41` | ble-classic-scan-off | `2026-08-25T03:09:48+00:00` | block `legacy`→`marked` (`792e8b99`→`65f8002b`), poweron `183052ae`→`ee9d76e7`; `PSCAN ISCAN` → gone; **2.41× mdev**; mqtt-client untouched |
+| `3e83bb41` | mqtt-keepalive-tolerance | `2026-08-25T03:10:32+00:00` | js `1d49a43a`→`b009b68c`; `with_ping_timeout_ms(10_000)` live at line 1155; DNS guard 5/5; PID 1434 → 15988 |
+| `3e83bb41` | log-permissions-and-rotation | `2026-08-25T03:13:49+00:00` | dirs `777`→`755`; stanza `create 0666`→`0644`; **`eatabit-ble-config` stanza was absent and is now installed**; PIDs 15988/15637 both unchanged |
+
+**BLE within-run A/B, measured before patching** (0% packet loss both arms):
+
+| Arm | avg (ms) | max (ms) | mdev (ms) |
+|---|---|---|---|
+| as-is | 25.654 | 265.742 | **38.018** |
+| classic off, LE on | 13.314 | 76.466 | **15.756** |
+
+**ISSUE-068 was worse here than on `96a39148`.** `logrotate.service` was *actively failing*
+— `Result=exit-code`, `ExecMainStatus=1`, last run 2026-08-25 00:49:56Z — with the explicit
+refusal *"skipping … because parent directory has insecure permissions"*. `mqtt-client.log`
+stood at **10.7 MB**, never rotated, with **zero** `.1`/`.gz` siblings and **no logrotate
+state entry at all**. After the patch both stanzas report 0 complaints. First real rotation
+due 2026-08-26 00:29:37Z.
+
+**BUG-057 ratio: 616 / 598 = 1.03:1** — healthy self-recovering profile (see finding 4).
+
+**Two log-hygiene observations, not actioned:** `mqtt-client.log` contains **binary data**
+(first NUL at offset 4,511,090), and holds **28** cleartext `authToken` occurrences — the
+latter already noted in `BUG-049/artifacts/bug049-issue064-customer-device-2026-08-20.md`
+as a candidate for its own record. The file was mode `644`, i.e. world-readable.
+
+---
 
 ### Declined — correctly
 
