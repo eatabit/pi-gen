@@ -177,12 +177,22 @@ broke it during the v1.0.11 / v1.1.5 cycle alone. Open both PRs before either is
 say in each that it must merge with its twin, and verify identity after both land:
 
 ```bash
-for p in patches/*/apply.sh; do
-  a=$(git show "origin/hw/1.1:$p" | shasum -a 256 | cut -c1-12)
-  b=$(git show "origin/hw/1.0:$p" | shasum -a 256 | cut -c1-12)
-  [ "$a" = "$b" ] || echo "DRIFT: $p"
+# EVERY file under patches/, not just apply.sh -- this README is under the same
+# invariant, and the file describing a two-sided rule is exactly the one whose
+# one-sided landing is easiest to miss.
+{ git ls-tree -r --name-only origin/hw/1.1 -- patches/
+  git ls-tree -r --name-only origin/hw/1.0 -- patches/ ; } | sort -u | while read -r p; do
+  a=$(git show "origin/hw/1.1:$p" 2>/dev/null | shasum -a 256 | cut -c1-12)
+  b=$(git show "origin/hw/1.0:$p" 2>/dev/null | shasum -a 256 | cut -c1-12)
+  # An absent file hashes to nothing on one side and would compare unequal for
+  # the wrong reason -- say so rather than reporting it as drift.
+  if [ -z "$a" ] || [ -z "$b" ]; then echo "MISSING ON ONE LINE: $p"
+  elif [ "$a" != "$b" ]; then echo "DRIFT: $p"; fi
 done
 ```
+
+Listing both lines and taking the union is deliberate: globbing one line's checkout cannot
+see a file that exists only on the other, which is the case this check most needs to catch.
 
 State its lineage in its `README.md` header block — the table at the top of every patch
 here — and add it to the table above. If it targets a file no existing lineage covers, it
