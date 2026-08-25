@@ -133,6 +133,21 @@ ACCEPTED_PRIOR_UNIT_SHAS=(
   "e92b2a157f0e9604bc8fed567eda7ae4221920372b8df37c8cb8b3ec0dce6edc" # stock unit, v1.0.8-v1.0.10 / v1.1.2-v1.1.4
 )
 
+# --- SUPERSEDED js states this patch must NOT touch (ISSUE-065) ---------------
+# A device whose mqtt-client.js is DOWNSTREAM of FIXED_JS_SHA already carries this
+# patch's fix plus later ones. Such a sha is NOT a prior: the prior list means
+# "install my payload over this", and this payload IS 1d49a43a -- so accepting a
+# downstream sha would OVERWRITE newer code with older.
+#
+# Only the js needs this. The unit does not: FIXED_UNIT_SHA (84aa9272) is still what
+# v1.0.11 / v1.1.5 render, so a freshly flashed device already reads as "current" on
+# that half and needs no new state.
+SUPERSEDED_JS_SHAS=(
+  "b009b68c8692314ed8476f3bbb3b1d479c3d97fca67240f7bcf96e44444ed339" # 2026-08-19-mqtt-keepalive-tolerance
+  "4cafe4db9f942825c5ced68a83591a3ba9663140e6b7d0b5ca708cf866ba3c09" # ISSUE-068 logrotate/permissions
+  "7ecbf0ead594437934e3d0e501689a3bf99a1df77acdefb4369b57fc5655a34a" # ISSUE-068 tmpfs snapshots == image source at v1.0.11 / v1.1.5
+)
+
 # Informational only; the checksums above are the authoritative gate.
 KNOWN_VERSIONS=("1.0.8" "1.0.9" "1.0.10" "1.1.2" "1.1.3" "1.1.4")
 
@@ -397,6 +412,8 @@ do_check() {
   if [[ $js_sha == "$FIXED_JS_SHA" ]]; then
     js_state=current
   else
+    for s in "${SUPERSEDED_JS_SHAS[@]}"; do [[ $js_sha == "$s" ]] && js_state=superseded; done
+    [[ $js_state == superseded ]] ||
     for prior in "${ACCEPTED_PRIOR_JS_SHAS[@]}"; do [[ $js_sha == "$prior" ]] && js_state=upgrade; done
   fi
 
@@ -417,6 +434,10 @@ do_check() {
       "$( [[ $js_state == refuse && $unit_state == refuse ]] && echo 'js and unit' \
           || { [[ $js_state == refuse ]] && echo js || echo unit; } )"
     rc=1
+  elif [[ $js_state == superseded && ( $unit_state == current || $unit_state == superseded ) ]]; then
+    printf 'RESULT         NO-OP -- device is AHEAD of this patch; its mqtt-client.js is\n'
+    printf '               downstream of %s. Applying would DOWNGRADE it.\n' "${FIXED_JS_SHA:0:16}"
+    rc=0
   elif [[ $js_state == current && $unit_state == current ]]; then
     printf 'RESULT         NO-OP -- already fully patched\n'
     rc=0
@@ -459,7 +480,15 @@ do_apply() {
   # than refused.
   local need_js=0 need_unit=0 is_accepted prior
 
-  if [[ $js_sha != "$FIXED_JS_SHA" ]]; then
+  local sup js_superseded=0
+  for sup in "${SUPERSEDED_JS_SHAS[@]}"; do [[ $js_sha == "$sup" ]] && js_superseded=1; done
+
+  if (( js_superseded )); then
+    # ISSUE-065: the device is ahead of us. Leave the js alone -- installing the payload
+    # would downgrade it -- and let the unit gate below decide independently.
+    log "mqtt-client.js (sha $js_sha) is DOWNSTREAM of this patch; leaving it untouched."
+    log "The device already carries this fix and later ones -- applying would DOWNGRADE it."
+  elif [[ $js_sha != "$FIXED_JS_SHA" ]]; then
     is_accepted=0
     for prior in "${ACCEPTED_PRIOR_JS_SHAS[@]}"; do [[ $js_sha == "$prior" ]] && is_accepted=1; done
     (( is_accepted )) || refuse_unrecognized "$MQTT_CLIENT_JS" "$js_sha" "${ACCEPTED_PRIOR_JS_SHAS[@]}" "$FIXED_JS_SHA"
@@ -475,6 +504,12 @@ do_apply() {
     need_unit=1
   else
     log "mqtt-client.service already at the fixed sha (2026-08-19 patch or later)."
+  fi
+
+  # ISSUE-065: a superseded js with an already-correct unit leaves nothing to install.
+  if (( ! need_js && ! need_unit )); then
+    log "Nothing to do -- neither file needs changing."
+    exit 0
   fi
 
   local known=0 kv
