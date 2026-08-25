@@ -57,6 +57,24 @@ ACCEPTED_PRIOR_SHAS=(
   "607f3d2888fbe9b01b5805da0f64f2267824ff5119e64236a94efd8981905bad" # previous combined rollup (pre connection-rebuild fix)
 )
 
+# --- SUPERSEDED: states this patch must NOT touch (ISSUE-065) -----------------
+# A device whose mqtt-client.js is DOWNSTREAM of FIXED_SHA already carries this fix
+# plus everything that landed after it. Such a sha is NOT a prior: ACCEPTED_PRIOR_SHAS
+# means "install my payload over this", and this patch's payload IS 2f8848db -- so
+# accepting a downstream sha would OVERWRITE newer code with older.
+#
+# Recorded in patches/ROLLOUT-LOG.md against device db996da7, where this very patch was
+# declined by hand: "Applying it would have been a downgrade." That judgement now lives
+# in the gate instead of relying on an operator to make it again.
+SUPERSEDED_SHAS=(
+  "d4647dab55ee858206446c9cc0be5c284ac40554f04a75252cc90abafcbc3376" # BUG-039 device-ready guard
+  "323299afb4d62508be5543d3ecb6c7240f8e05dba7ad566f9eb0644017d026c0" # BUG-049 first cut -- superseded, but still downstream of us
+  "1d49a43a401d782bf9d72f69f2c9346c21405a17685185bdbd50f03986d60121" # 2026-08-20-ngrok-session-reclaim
+  "b009b68c8692314ed8476f3bbb3b1d479c3d97fca67240f7bcf96e44444ed339" # 2026-08-19-mqtt-keepalive-tolerance
+  "4cafe4db9f942825c5ced68a83591a3ba9663140e6b7d0b5ca708cf866ba3c09" # ISSUE-068 logrotate/permissions
+  "7ecbf0ead594437934e3d0e501689a3bf99a1df77acdefb4369b57fc5655a34a" # ISSUE-068 tmpfs snapshots == image source at v1.0.11 / v1.1.5
+)
+
 # Versions whose stock mqtt-client.js matches the stock prior sha (informational;
 # the checksum is the authoritative gate, so patched / older units also match).
 KNOWN_VERSIONS=("1.0.9" "1.1.3")
@@ -230,6 +248,18 @@ do_apply() {
     [[ -f $MARKER_FILE ]] || printf 'applied_at=%s\nfrom_version=%s\nresult=success\n' "$(date -Iseconds)" "$v" > "$MARKER_FILE"
     exit 0
   fi
+
+  # ISSUE-065: superseded is checked BEFORE prior, and exits 0. The device is ahead of
+  # this patch; applying the payload would downgrade it. Nothing to do, nothing wrong.
+  local sup
+  for sup in "${SUPERSEDED_SHAS[@]}"; do
+    if [[ $deployed_sha == "$sup" ]]; then
+      log "mqtt-client.js (sha $deployed_sha) is DOWNSTREAM of this patch."
+      log "The device already carries this fix and later ones -- applying would DOWNGRADE it."
+      log "Nothing to do."
+      exit 0
+    fi
+  done
 
   # Safety: only replace a recognized prior file (stock, or the superseded build).
   local accepted=0 prior
