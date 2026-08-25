@@ -110,8 +110,39 @@ found all three healthy. **Applying a patch to them is not.**
 | `19dffb8b` | ble-classic-scan-off | `2026-08-24T19:43:25+00:00` | `PSCAN ISCAN` → gone; 1.74× mdev |
 | `19dffb8b` | mqtt-keepalive-tolerance | `2026-08-24T19:44:06+00:00` | js `b009b68c`; DNS guard 5/5; PID 1494 → 3232 |
 
-`96a39148` was **verified only, not patched** in this campaign — it already carries all
-seven patches (reclaim `2026-08-21T19:35:07+01:00`, keepalive `2026-08-23T17:31:37+00:00`).
+`96a39148` was **verified only** through 2026-08-24 — it already carried all seven patches
+(reclaim `2026-08-21T19:35:07+01:00`, keepalive `2026-08-23T17:31:37+00:00`). It was then
+patched three times on 2026-08-25; see *ISSUE-068 closed end-to-end* below.
+
+### ISSUE-068 closed end-to-end — `96a39148`, 2026-08-25
+
+The first device in the fleet with **all three** ISSUE-068 patches, and so the first where
+the fix is complete rather than half-applied.
+
+| Device | Patch | Applied | Evidence |
+|---|---|---|---|
+| `96a39148` | log-permissions-and-rotation | `2026-08-25T02:00:23+00:00` | dirs `777`→`755`; both logrotate stanzas installed; `mqtt-client` PID 28480 **unchanged**; `mqtt-client.log` had gone **unrotated since 2026-04-22** (4 months, 2.9 MB) |
+| `96a39148` | ble-config-permissions | `2026-08-25T02:05:09+00:00` | js `ecbf9a06`→`fff83fb7`; `0o777`×3→0, `0o666`×3→0; `ble-config` PID 7044→44990 |
+| `96a39148` | app-permissions-and-shadow-churn | `2026-08-25T02:10:59+00:00` | js `b009b68c`→`7ecbf0ea`; 8 sites (`0o755`×5 + `0o644`×3); 3 snapshots retired to `/run/eatabit`; PID 28480→45656; DNS guard 5/5; reconnected in **5 s** |
+
+**The pair is proven on hardware, not merely asserted.** `ble-config` genuinely restarted
+(PID 7044 → 44990) and the directories **stayed `755`**. With the pre-patch js that restart
+would have re-created them `0777` and silently undone the companion — which is exactly the
+"neither is sufficient alone" claim in both READMEs, now demonstrated rather than argued.
+
+The recreation window did **not** bite here only because `ble-config` had not restarted
+since 2026-08-21, so nothing reverted the directories in the 5 minutes between the two
+patches. **On a device where `ble-config` restarts more often, apply the two in immediate
+succession.**
+
+**Churn eliminated, measured before it was destroyed:** `96a39148` logged **96 health
+persists/day** (2026-08-22/23/24: 96 / 102 / 96) at 1714 B each = **160.7 KiB/day** to the
+card, independently confirming the patch README's ~159 KiB/day. Lifetime on-card total was
+**8,792** rewrites. `rotate 7` on a 2.9 MB log also reclaims ~2.5 MB of card.
+
+**BUG-039 held across the `mqtt-client` restart** — `/run/eatabit/device-ready-printed` kept
+its original `2026-08-21 18:24:45` mtime via `RuntimeDirectoryPreserve=restart`, so no
+duplicate ready receipt printed. Verified without a test print (see finding 13).
 
 ### Declined — correctly
 
@@ -271,11 +302,35 @@ does not enforce that stated exclusion, and in practice v1.1.1 devices are in sc
 
 ### Findings raised, not yet actioned
 
-4. **`BUG-057` has a second device.** Recorded as a single-device finding on `c3343f47`
-   (13,840 DNS failures, 12 watchdog fires). `42288e07` shows **5,131 DNS failures and 91
-   watchdog fires** — same signature, and it needed a reboot on 2026-08-24 to clear a
-   wedged tunnel. Until BUG-057 ships, any `mqtt-client` restart on either device is safe
-   only while DNS resolves; use a pre-restart DNS guard (5 resolves, abort on any failure).
+4. **`BUG-057` has a second device — and the ratio, not the count, is the signature.**
+   Recorded as a single-device finding on `c3343f47` (13,840 DNS failures, 12 watchdog
+   fires). `42288e07` shows **5,131 DNS failures and 91 watchdog fires** — same signature,
+   and it needed a reboot on 2026-08-24 to clear a wedged tunnel. Until BUG-057 ships, any
+   `mqtt-client` restart on either device is safe only while DNS resolves; use a pre-restart
+   DNS guard (5 resolves, abort on any failure).
+
+   **`96a39148` is a measured counter-example** (2026-08-25, same 4-month log window,
+   2026-04-22 → 2026-08-25):
+
+   | Device | DNS failures | Watchdog fires | Ratio | Reading |
+   |---|---|---|---|---|
+   | `c3343f47` | 13,840 | 12 | **1153:1** | 115.3 h offline / 7 outages; power-cycle recovery |
+   | `42288e07` | 5,131 | 91 | **56:1** | stalls, does not self-clear |
+   | `96a39148` | 292 | 223 | **1.3:1** | watchdog clears each run |
+
+   A ratio near **1:1 is the healthy profile** — failures occur and are recovered — whereas
+   the pathology is thousands of failures accumulating against a handful of fires. So a bare
+   "device has DNS failures" count does **not** identify a BUG-057 candidate; screen on the
+   ratio. `96a39148` also had 29 successful connects, no reboot in 3 d 8 h, `NRestarts=0`,
+   and DNS answering in 11 ms.
+
+   **Consequence for rollout targeting:** after ISSUE-068 landed on `96a39148` it became the
+   **only field device at `7ecbf0ea…`**, which is the single accepted prior of
+   `2026-08-24-mqtt-never-connected-watchdog`. It is therefore the one field device that
+   *could* take that patch — while being, on this evidence, among the devices that least
+   **need** it. Eligibility and need point in opposite directions here; do not let the
+   former stand in for the latter when field rollout is authorized.
+
 5. **(SUPERSEDED — ISSUE-068 shipped a better fix; see 18.)** **`ISSUE-068` reproduced on every device seen** — `logrotate` fails with
    `result=exit-code` because `/usr/local/lib/eatabit/log` is mode `0777`. Image source
    sets it twice (`stage3/01-create-eatabit-lib/00-run.sh:21` uses `chmod 0777`,
@@ -473,3 +528,44 @@ does not enforce that stated exclusion, and in practice v1.1.1 devices are in sc
 15. **Re-check idle immediately before a restart, not at recon time.** On `db996da7` a real
     customer job printed 2 m 19 s before the restart while the idle reading in hand was
     38 minutes stale. Nothing was dropped, by luck.
+
+24. **`2026-08-24-mqtt-never-connected-watchdog` is BENCH ONLY and was correctly declined
+    on `96a39148`** (2026-08-25). Its README opens with an explicit prohibition — *"DO NOT
+    INSTALL ON ANY FIELD DEVICE… Field rollout is a separate, later, explicitly authorized
+    decision"* — and names `c3343f47`, the device the bug was diagnosed from, as **not** a
+    target. `96a39148` is field-reachable only via ngrok, so it is a field device. The gate
+    would have passed (`7ecbf0ea…` matches the sole accepted prior); the **policy** is what
+    refused. Recorded because a future operator reading only the sha gate will find this
+    device eligible and may mistake that for authorization.
+
+25. **Three documentation defects in `2026-08-23-app-permissions-and-shadow-churn`**, found
+    while applying it to `96a39148` (2026-08-25). The `apply.sh` is correct in all three
+    cases; only the prose is wrong.
+    - **The version-exclusion claim is false, and `96a39148` disproves it.** The README and
+      `apply.sh`'s refusal text (~line 252) both state a device on *"v1.0.1–v1.0.7, v1.1.0
+      or v1.1.1 CANNOT enter the lineage and so cannot take this patch at all."* `96a39148`
+      is **v1.1.1** and took it cleanly. The rule governs *stock* shas, not version strings:
+      a v1.1.1 that has already run `watchdog-exit-hang` and `2026-06-30` carries an
+      accepted prior sha and enters normally. As written, the message will cause an operator
+      to abandon a patchable device. (Consistent with finding 8 and the `KNOWN_VERSIONS`
+      note in the BUG-057 patch: v1.1.0 is a real tag, `3772bd8`.)
+    - **The Payloads table and Gates section still describe `ble-config.js`** — five
+      variants with prior/fixed shas — but no `ble-config.js` ships in that directory and
+      `apply.sh` is `mqtt-client.js`-only. Stale text left by the deliberate split into
+      `2026-08-24-ble-config-permissions`.
+    - **The patch depends on `RuntimeDirectory=eatabit` but does not gate on it.** The
+      snapshots move to `/run/eatabit`; if that directory is absent the persist path has
+      nowhere to write. In practice the js sha implies the unit (reaching `b009b68c…`
+      requires `ngrok-session-reclaim`, which installs unit `84aa9272…`), so this is latent
+      rather than live — but it is an unchecked assumption, not a checked one. Verified
+      manually on `96a39148` before applying.
+
+26. **ISSUE-068 is not fully closed in the field even after all three patches.**
+    `cutter-type.json`, `light.json` and `volume.json` remain **`0666`** on `96a39148` after
+    all three applied. The image source now installs them `0644`
+    (`stage3/03-install-mqtt-client/00-run.sh`), but **no field patch narrows them** — the
+    companion patch fixed directories, the app patch fixed the code that creates them. So a
+    patched device and a reflashed device do **not** converge on these three files, which
+    contradicts the convergence property the payload tables otherwise guarantee. Low
+    severity (root-owned; logrotate does not read them), but it means "ISSUE-068 closed on a
+    device" currently means *directories and creation modes*, not *all file modes*.
