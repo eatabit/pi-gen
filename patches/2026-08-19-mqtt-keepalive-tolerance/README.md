@@ -1,5 +1,12 @@
 # 2026-08-19 — MQTT keep-alive has no tolerance for a late `PINGRESP` (`BUG-045`)
 
+> **v1.0.11 / v1.1.5 ALREADY CARRY THIS FIX — DO NOT APPLY THIS PATCH TO ONE.**
+> A device flashed to either is **downstream** of this patch: its `mqtt-client.js` is
+> newer than what this patch installs. The gate reports
+> `NO-OP — device is AHEAD of this patch` and exits 0, because applying the bundled
+> payload would **overwrite newer code with older**. Verified against both built images
+> on 2026-08-25 (`ISSUE-065`). Apply only to devices on **earlier** firmware.
+
 | | |
 |---|---|
 | **Tracker** | `BUG-045` |
