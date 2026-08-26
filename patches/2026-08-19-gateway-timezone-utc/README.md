@@ -1,5 +1,10 @@
 # 2026-08-19 — gateway timezone to UTC (BUG-042)
 
+> **v1.0.11 / v1.1.5 ALREADY CARRY THIS FIX.** This patch gates on deployed state
+> rather than a replaced-file checksum, and both built images were confirmed to be in
+> that state on 2026-08-25 (`ISSUE-065`), so it has nothing to do on a freshly flashed
+> device. Apply only to devices on **earlier** firmware.
+
 > | | |
 > |---|---|
 > | **Lineage** | `timezone` — touches `/etc/timezone` and the `/etc/localtime` symlink. **New, independent lineage**: no existing patch targets either file |

@@ -1,5 +1,10 @@
 # `2026-08-23-log-permissions-and-rotation` — ISSUE-068, Phase 2
 
+> **v1.0.11 / v1.1.5 ALREADY CARRY THIS FIX.** A device flashed to either lands
+> exactly on this patch's fixed state, so the patch **no-ops**. Verified against both
+> built images on 2026-08-25 (`ISSUE-065`). Apply only to devices on **earlier**
+> firmware.
+
 **Makes logrotate able to rotate the eatabit logs at all.** Restarts nothing.
 
 ## The bug
