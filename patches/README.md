@@ -30,6 +30,7 @@ planning a campaign; the directory listing on its own will mislead you.
 | **`log2ram`** | `/etc/systemd/system/log2ram-daily.timer.d/hourly.conf`, `/etc/log2ram.conf` | 1. [`2026-08-19-log2ram-timer-hourly-sync`](./2026-08-19-log2ram-timer-hourly-sync/) — **independent** |
 | **`log-permissions`** | `/usr/local/lib/eatabit/{log,config,reset}` (directory modes), `/etc/logrotate.d/eatabit-mqtt-client`, `/etc/logrotate.d/eatabit-ble-config` | 1. [`2026-08-23-log-permissions-and-rotation`](./2026-08-23-log-permissions-and-rotation/) — **independent** |
 | **`ble-config`** | `/usr/local/lib/eatabit/bin/ble-config.js` | 1. [`2026-08-24-ble-config-permissions`](./2026-08-24-ble-config-permissions/) — **independent** |
+| **`wifi-powersave`** | `/etc/NetworkManager/conf.d/eatabit-wifi-powersave.conf` | 1. [`2026-09-23-wifi-powersave-off`](./2026-09-23-wifi-powersave-off/) — **independent** |
 
 **`2026-08-19-gateway-timezone-utc` targets files no other patch touches** — it replaces
 no file at all, gating instead on the deployed timezone state — so it is independent of
@@ -41,6 +42,16 @@ log2ram timer drop-in and `/etc/log2ram.conf`, which no other patch here touches
 shares no checksum with any of them and may be applied at any point in a campaign. Like the
 timezone patch it **replaces no file** — it enables a unit and adds a drop-in — so it gates
 on observed state rather than a replaced-file sha, and it **restarts nothing**.
+
+**`2026-09-23-wifi-powersave-off` opens the `wifi-powersave` lineage.** It adds one
+NetworkManager `conf.d` file that no other patch touches, so it is independent of every
+other lineage and may be applied at any point in a campaign. It **replaces no file** — it
+gates on deployed state (the conf file, any other config file setting `wifi.powersave`,
+and every Wi-Fi profile's own `802-11-wireless.powersave`) — and it **restarts nothing
+and drops no connection**: it re-reads NetworkManager's config (`nmcli general reload
+conf`) and switches power-save off on the live association with `iw`, never reloading
+NetworkManager or cycling a connection. It records `mqtt-client`'s `MainPID` before and
+after as evidence.
 
 **ISSUE-068 ships THREE patches, and they share no file with one another**, so they may be
 applied in any order — but **all three are needed** to close it on a device:
@@ -211,6 +222,11 @@ marker. Renaming a patch that has ever been applied in the field orphans those, 
 > fixed sha, and four gate on deployed state that the images already satisfy. **Every
 > affected-versions cell below therefore means "before v1.0.11 / v1.1.5".**
 >
+> **One exception, added after both releases:** `2026-09-23-wifi-powersave-off`
+> (`BUG-093`) fixes something **v1.0.11 and v1.1.5 still ship**, so on a freshly flashed
+> device it reports *would apply*. Its row says so explicitly. Images built after it
+> merged carry the same conf file and report *already fixed*.
+>
 > **The three that report AHEAD are the ones to be careful with.** `2026-06-30-offline-reboot-and-expired-job`,
 > `2026-08-19-mqtt-keepalive-tolerance` and `2026-08-20-ngrok-session-reclaim` each bundle a
 > payload **older** than what the release ships, so forcing one onto a v1.0.11 / v1.1.5
@@ -227,6 +243,7 @@ marker. Renaming a patch that has ever been applied in the field orphans those, 
 | 2026-08-20 | [`2026-08-20-ngrok-session-reclaim`](./2026-08-20-ngrok-session-reclaim/) | **supersedes the 2026-08-19 patch** — self-contained rollup, no prerequisite; accepts stock v1.0.8–v1.0.10 / v1.1.2–v1.1.4, the 2026-06 intermediates, and the 2026-08-19 output (checksum-gated, js **and** unit) | High — one connect/disconnect cycle wedges remote SSH until `mqtt-client` restarts; this is the delivery path every other patch ships over |
 | 2026-08-20 | [`2026-08-20-ble-classic-scan-off`](./2026-08-20-ble-classic-scan-off/) | v1.0.1–v1.0.10, v1.1.0–v1.1.4 (checksum-gated; `00-run.sh` is byte-identical across all 15 tags, so one prior sha per file) | Medium — fleet-wide WiFi latency/jitter tax from permanent BR/EDR scanning on a shared antenna. **Validated on hardware** 2026-08-21 on v1.1.4 / v1.0.10 / v1.1.0 (both lines): jitter 1.84x better, A2 passed — a stranded device is still discoverable and connectable from Android and iOS. **Fleet rollout gated on `BUG-051`**, which is pre-existing and unrelated: a device that has lost WiFi cannot be re-provisioned through the app's network list, patched or not. |
 | 2026-08-19 | [`2026-08-19-mqtt-keepalive-tolerance`](./2026-08-19-mqtt-keepalive-tolerance/) | devices at the `2026-08-20-ngrok-session-reclaim` end state (sha `1d49a43a…`), which is also repo source on both lines — checksum-gated, **js only**, exactly one accepted prior | Medium — one late `PINGRESP` tears down a healthy connection; every disconnect on `00000000d9b7e5d1` was `AWS_ERROR_MQTT_TIMEOUT` at `n × 30 s + ~3.2 s` while WiFi never dropped. Widens the ping window 3 s → 10 s; genuine-offline detection 33 s → 40 s. **Validated on hardware** 2026-08-23 on **both lines** — v1.1.4 / v1.1.0 (`hw/1.1`) and v1.0.10 (`hw/1.0`): applied, one restart each, reconnected to AWS IoT, zero errors; `--check` exit codes 0/1/2 confirmed. Also applied to one authorized field device on v1.1.1. At that date the >=24 h soak and the `--rollback` exercise had not yet been run; see `BUG-045` for their outcome. (`BUG-045`) |
+| 2026-09-23 | [`2026-09-23-wifi-powersave-off`](./2026-09-23-wifi-powersave-off/) | **every released version, v1.0.1–v1.0.11 and v1.1.0–v1.1.5 — including the current releases** (gated on deployed state, not a checksum: this patch adds a file and replaces none) | Hardening (P2) — no image sets Wi-Fi power-save, so every gateway runs with the `brcmfmac` driver default, **on**. Adds a NetworkManager `conf.d` default `wifi.powersave = 2` and turns power-save off on the live association. **Removes a suspect, not a diagnosed cause** — see its README → *Honest scope*. **Restarts nothing, drops no connection.** Efficacy is measured before/after by its own `measure.sh` (`BUG-093`) |
 
 > **Restarts nothing at all:** `2026-08-19-gateway-timezone-utc` goes further than the
 > note below — it restarts no service whatsoever, so it cannot drop the ngrok tunnel, the
