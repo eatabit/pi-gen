@@ -24,7 +24,7 @@ planning a campaign; the directory listing on its own will mislead you.
 
 | Lineage | Target files | Patches, in order |
 |---|---|---|
-| **`mqtt-client`** | `/usr/local/lib/eatabit/bin/mqtt-client.js`, `/etc/systemd/system/mqtt-client.service` | 1. [`2026-05-12-watchdog-exit-hang`](./2026-05-12-watchdog-exit-hang/)<br>2. [`2026-06-30-offline-reboot-and-expired-job`](./2026-06-30-offline-reboot-and-expired-job/)<br>3. [`2026-08-20-ngrok-session-reclaim`](./2026-08-20-ngrok-session-reclaim/) — **self-contained**<br>4. [`2026-08-19-mqtt-keepalive-tolerance`](./2026-08-19-mqtt-keepalive-tolerance/) — **requires 3**<br>5. [`2026-08-23-app-permissions-and-shadow-churn`](./2026-08-23-app-permissions-and-shadow-churn/) — **requires 4** |
+| **`mqtt-client`** | `/usr/local/lib/eatabit/bin/mqtt-client.js`, `/etc/systemd/system/mqtt-client.service` | 1. [`2026-05-12-watchdog-exit-hang`](./2026-05-12-watchdog-exit-hang/)<br>2. [`2026-06-30-offline-reboot-and-expired-job`](./2026-06-30-offline-reboot-and-expired-job/)<br>3. [`2026-08-20-ngrok-session-reclaim`](./2026-08-20-ngrok-session-reclaim/) — **self-contained**<br>4. [`2026-08-19-mqtt-keepalive-tolerance`](./2026-08-19-mqtt-keepalive-tolerance/) — **requires 3**<br>5. [`2026-08-23-app-permissions-and-shadow-churn`](./2026-08-23-app-permissions-and-shadow-churn/) — **requires 4**<br>6. [`2026-09-23-netwatch`](./2026-09-23-netwatch/) — **requires 5** (also replaces `boot-print.sh` + `health-monitor.js` and installs netwatch) |
 | **`bluetooth`** | `/etc/bluetooth/main.conf`, `/etc/systemd/system/bluetooth-poweron.service` | 1. [`2026-08-20-ble-classic-scan-off`](./2026-08-20-ble-classic-scan-off/) — **independent** |
 | **`timezone`** | `/etc/timezone`, `/etc/localtime` (symlink) | 1. [`2026-08-19-gateway-timezone-utc`](./2026-08-19-gateway-timezone-utc/) — **independent** |
 | **`log2ram`** | `/etc/systemd/system/log2ram-daily.timer.d/hourly.conf`, `/etc/log2ram.conf` | 1. [`2026-08-19-log2ram-timer-hourly-sync`](./2026-08-19-log2ram-timer-hourly-sync/) — **independent** |
@@ -112,6 +112,7 @@ the top.
 | 3. `2026-08-20-ngrok-session-reclaim` | **`NO-OP — device is AHEAD of this patch`** |
 | 4. `2026-08-19-mqtt-keepalive-tolerance` | **`NO-OP — device is AHEAD of this patch`** |
 | 5. `2026-08-23-app-permissions-and-shadow-churn` | no-op — already at its fixed sha |
+| 6. `2026-09-23-netwatch` | **would apply** — v1.0.11 / v1.1.5 are exactly its accepted prior |
 
 **Entries 2–4 report that through a third gate state, `SUPERSEDED_SHAS`, checked BEFORE the
 accepted-prior list and exiting 0.** Without it they would refuse — telling an operator the
@@ -222,10 +223,12 @@ marker. Renaming a patch that has ever been applied in the field orphans those, 
 > fixed sha, and four gate on deployed state that the images already satisfy. **Every
 > affected-versions cell below therefore means "before v1.0.11 / v1.1.5".**
 >
-> **One exception, added after both releases:** `2026-09-23-wifi-powersave-off`
-> (`BUG-093`) fixes something **v1.0.11 and v1.1.5 still ship**, so on a freshly flashed
-> device it reports *would apply*. Its row says so explicitly. Images built after it
-> merged carry the same conf file and report *already fixed*.
+> **Two exceptions, added after both releases:** `2026-09-23-wifi-powersave-off`
+> (`BUG-093`) and `2026-09-23-netwatch` (`BUG-094`) fix things **v1.0.11 and v1.1.5 still
+> ship**, so on a freshly flashed device each reports *would apply*. Their rows say so
+> explicitly. Images built after they merged carry the same files and report *already
+> fixed*. Ship the power-save patch **before or with** netwatch: without it, netwatch's
+> driver reload and reboot steps return power-save to the driver default (on).
 >
 > **The three that report AHEAD are the ones to be careful with.** `2026-06-30-offline-reboot-and-expired-job`,
 > `2026-08-19-mqtt-keepalive-tolerance` and `2026-08-20-ngrok-session-reclaim` each bundle a
@@ -244,6 +247,7 @@ marker. Renaming a patch that has ever been applied in the field orphans those, 
 | 2026-08-20 | [`2026-08-20-ble-classic-scan-off`](./2026-08-20-ble-classic-scan-off/) | v1.0.1–v1.0.10, v1.1.0–v1.1.4 (checksum-gated; `00-run.sh` is byte-identical across all 15 tags, so one prior sha per file) | Medium — fleet-wide WiFi latency/jitter tax from permanent BR/EDR scanning on a shared antenna. **Validated on hardware** 2026-08-21 on v1.1.4 / v1.0.10 / v1.1.0 (both lines): jitter 1.84x better, A2 passed — a stranded device is still discoverable and connectable from Android and iOS. **Fleet rollout gated on `BUG-051`**, which is pre-existing and unrelated: a device that has lost WiFi cannot be re-provisioned through the app's network list, patched or not. |
 | 2026-08-19 | [`2026-08-19-mqtt-keepalive-tolerance`](./2026-08-19-mqtt-keepalive-tolerance/) | devices at the `2026-08-20-ngrok-session-reclaim` end state (sha `1d49a43a…`), which is also repo source on both lines — checksum-gated, **js only**, exactly one accepted prior | Medium — one late `PINGRESP` tears down a healthy connection; every disconnect on `00000000d9b7e5d1` was `AWS_ERROR_MQTT_TIMEOUT` at `n × 30 s + ~3.2 s` while WiFi never dropped. Widens the ping window 3 s → 10 s; genuine-offline detection 33 s → 40 s. **Validated on hardware** 2026-08-23 on **both lines** — v1.1.4 / v1.1.0 (`hw/1.1`) and v1.0.10 (`hw/1.0`): applied, one restart each, reconnected to AWS IoT, zero errors; `--check` exit codes 0/1/2 confirmed. Also applied to one authorized field device on v1.1.1. At that date the >=24 h soak and the `--rollback` exercise had not yet been run; see `BUG-045` for their outcome. (`BUG-045`) |
 | 2026-09-23 | [`2026-09-23-wifi-powersave-off`](./2026-09-23-wifi-powersave-off/) | **every released version, v1.0.1–v1.0.11 and v1.1.0–v1.1.5 — including the current releases** (gated on deployed state, not a checksum: this patch adds a file and replaces none) | Hardening (P2) — no image sets Wi-Fi power-save, so every gateway runs with the `brcmfmac` driver default, **on**. Adds a NetworkManager `conf.d` default `wifi.powersave = 2` and turns power-save off on the live association. **Removes a suspect, not a diagnosed cause** — see its README → *Honest scope*. **Restarts nothing, drops no connection.** Efficacy is measured before/after by its own `measure.sh` (`BUG-093`) |
+| 2026-09-23 | [`2026-09-23-netwatch`](./2026-09-23-netwatch/) | devices at the `2026-08-23-app-permissions-and-shadow-churn` end state (`mqtt-client.js` `7ecbf0ea…`) — **including v1.0.11 / v1.1.5, which ship it** — checksum-gated per file: `boot-print.sh` `2998dd94…` and `health-monitor.js` `e251ba26…` (each byte-identical in all 17 release tags), netwatch files absent. **Unlike every row above, this one is NOT already in v1.0.11 / v1.1.5.** | High (P1) — a device that loses its network stays offline until someone power-cycles it: nothing watches the link. Installs **netwatch** (nmcli reconnect → radio cycle → driver reload → reboot with backoff, guarded against never-connected networks and in-flight prints), suppresses **both** boot receipts after a netwatch reboot, and publishes `device.networkRecovered`. Restarts `mqtt-client`. (`BUG-094`) |
 
 > **Restarts nothing at all:** `2026-08-19-gateway-timezone-utc` goes further than the
 > note below — it restarts no service whatsoever, so it cannot drop the ngrok tunnel, the

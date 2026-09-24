@@ -78,6 +78,7 @@ ACCEPTED_PRIOR_SHAS=(
 SUPERSEDED_SHAS=(
   "4cafe4db9f942825c5ced68a83591a3ba9663140e6b7d0b5ca708cf866ba3c09" # ISSUE-068 logrotate/permissions
   "7ecbf0ead594437934e3d0e501689a3bf99a1df77acdefb4369b57fc5655a34a" # ISSUE-068 shadow snapshots to tmpfs == image source at v1.0.11 / v1.1.5
+  "fff9838f188034bf53db970858451efacd7ebd59058c1687e815354600cc01b8" # BUG-094 2026-09-23-netwatch
 )
 
 # Informational only; the checksums above are the authoritative gate. 1.1.0 is listed
