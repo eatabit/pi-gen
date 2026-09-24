@@ -15,30 +15,11 @@ chmod 755 "${ROOTFS_DIR}/usr/local/lib/eatabit/escpos"
 install -D -m 0644 files/booting.escpos \
   "${ROOTFS_DIR}/usr/local/lib/eatabit/escpos/booting.escpos"
 
-# Create boot print script that waits for printer then prints
-cat > "${ROOTFS_DIR}/usr/local/lib/eatabit/bin/boot-print.sh" << 'SCRIPT_EOF'
-#!/bin/bash
-PRINTER="/dev/usb/lp0"
-ESCPOS="/usr/local/lib/eatabit/escpos/booting.escpos"
-MAX_WAIT=30
-
-# Wait for printer to appear
-WAITED=0
-while [ ! -e "$PRINTER" ] && [ $WAITED -lt $MAX_WAIT ]; do
-  sleep 1
-  WAITED=$((WAITED + 1))
-done
-
-if [ -e "$PRINTER" ] && [ -f "$ESCPOS" ]; then
-  # Wait for printer firmware to initialize after USB enumeration
-  sleep 2
-  cat "$ESCPOS" > "$PRINTER" 2>/dev/null || true
-  # Wait for printer to finish processing raster data before other services access it
-  sleep 3
-fi
-SCRIPT_EOF
-
-chmod 755 "${ROOTFS_DIR}/usr/local/lib/eatabit/bin/boot-print.sh"
+# Install the boot print script (waits for the printer, then prints). It lives in
+# files/ rather than a heredoc here so the BUG-094 field patch can ship the same bytes.
+# It skips the receipt after a netwatch-initiated reboot (BUG-094 guard 4).
+install -D -m 0755 files/boot-print.sh \
+  "${ROOTFS_DIR}/usr/local/lib/eatabit/bin/boot-print.sh"
 
 # Create systemd service — runs as early as possible after local filesystems
 on_chroot << 'EOF'

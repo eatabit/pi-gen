@@ -1,0 +1,8 @@
+/usr/local/lib/eatabit/log/netwatch.log {
+  size 1M
+  rotate 2
+  missingok
+  notifempty
+  su root root
+  create 0644 root root
+}
