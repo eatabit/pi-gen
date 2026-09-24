@@ -617,7 +617,11 @@ async function main() {
   }
 
   state.bootId = bootId;
-  state.lastUptime = readUptime();
+  // The START of this run, not its end: the next run's delta must cover the time this
+  // run spent working (probe timeouts, snapshots, radio and driver steps), or every
+  // offline minute is undercounted -- measured on the bench as ~15-18%, which turned a
+  // 30 min reboot into ~36 min.
+  state.lastUptime = uptime;
   state.online = online;
   writeJsonAtomic(STATE_FILE, state);
 }
