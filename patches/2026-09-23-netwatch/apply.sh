@@ -148,7 +148,7 @@ TARGETS=(
   "mqtt-client.js|/usr/local/lib/eatabit/bin/mqtt-client.js|0755|fff9838f188034bf53db970858451efacd7ebd59058c1687e815354600cc01b8|7ecbf0ead594437934e3d0e501689a3bf99a1df77acdefb4369b57fc5655a34a"
   "boot-print.sh|/usr/local/lib/eatabit/bin/boot-print.sh|0755|b4ced89e1ff01b69bef09817cb5565b928fea1ecab366257eb59f8f03aaab025|2998dd94358a614fedc717a917af37bc5ff5ea22b4deac17d0b8d0bd4f6606d1"
   "health-monitor.js|/usr/local/lib/eatabit/bin/health-monitor.js|0755|5285fb5cd65ba85ed48bdb9aa417d197cf9d7f8d0eba5d5449aa6172f7a23ba3|e251ba26eca9a3934cadfe4484f5fef9b3d137320b8390602b79f21d33308192"
-  "netwatch.js|/usr/local/lib/eatabit/bin/netwatch.js|0755|0eb625b2794b14b0a19517fe15e60e51c7fcc526c6cd2ec48d7c9365ec99dd4c|absent"
+  "netwatch.js|/usr/local/lib/eatabit/bin/netwatch.js|0755|5f440b5c793a286a1eeb69486fd5c511d74e42ae96fc780d9f34cfcfd3a80e5d|absent"
   "netwatch.service|/etc/systemd/system/netwatch.service|0644|0a41893f2709a06cfb2fae416739f33f3ea63f162d5fba26cb63e9584b41aee8|absent"
   "netwatch.timer|/etc/systemd/system/netwatch.timer|0644|fa651de76737a8306eeef2bb1392d32092a1eb3bd7ee68a01869f6d505f59182|absent"
   "eatabit-netwatch|/etc/logrotate.d/eatabit-netwatch|0644|df9db55848d81fafb94a69152a5307e6e311a9155d1edff6bdfae49a976ab4b8|absent"
