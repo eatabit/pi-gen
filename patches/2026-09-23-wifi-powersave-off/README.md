@@ -120,10 +120,12 @@ A second run on a fixed device is a no-op (exit 0, nothing touched, no marker wr
 `nmcli con up`/`down`, `nmcli device reapply`/`disconnect`. Each drops or reassociates
 Wi-Fi, and Wi-Fi is the only way in.
 
-**Whether `nmcli general reload conf` changes the running daemon** is *pending the bench
-measurement* (`BUG-093` gate 2). If it does not, nothing is lost: the conf takes effect
-at the next activation or reboot, and the `iw` call covers the interval. Apply logs what
-NetworkManager itself journaled after the reload, as evidence either way.
+**`nmcli general reload conf` does reach the running daemon.** Measured on
+`192.168.1.80` (v1.0.11) on 2026-09-24. NetworkManager journaled
+`config: signal: CONF,config-files,values,…` listing `eatabit-wifi-powersave.conf` among
+the files it re-read. Apply logs those lines itself on every run. If a future NetworkManager
+ignored the reload, nothing would be lost: the conf takes effect at the next activation, and
+the `iw` call covers the interval.
 
 ## Rollback
 
@@ -139,8 +141,25 @@ Removes the conf (or restores a pre-existing one from the backup),
 
 - `iw dev wlan0 get power_save` → `Power save: off`
 - `sudo ./apply.sh --check` → exit 0
-- After the next reassociation or reboot, still `off` — the conf, not the one-shot `iw`,
-  is what holds it there. **Verify this once per hardware line**, on a bench unit.
+- After the next reassociation, radio cycle, driver reload or reboot, still `off`.
+
+**What actually holds it off: measured, with controls** (`192.168.1.80`, v1.0.11,
+2026-09-24). The disruptions below are the same commands BUG-094's `netwatch` uses:
+
+| Event | Without the conf (power-save forced off first) | With the conf |
+|---|---|---|
+| `nmcli con down` / `up` | stays **off** | off |
+| `nmcli radio wifi off` / `on` | stays **off** | off |
+| driver reload (`modprobe -r brcmfmac_cyw brcmfmac; modprobe brcmfmac`) | back to **on** | **off** |
+| reboot | **on** (stock boot) | **off** |
+
+`brcmfmac` keeps the last runtime setting across a reconnect or a radio cycle, so those
+two events do not tell the conf from a one-shot `iw`. **A driver reload and a reboot reset
+the chip to its default (on), and the conf is what turns power-save back off after both.**
+Those are exactly the events a bare `iw` call would lose. They are also BUG-094 `netwatch`'s
+last two recovery steps, so on a device carrying both patches, this conf is what keeps
+power-save off through a netwatch recovery.
+
 
 ## Measuring efficacy — `measure.sh`
 
@@ -153,6 +172,15 @@ both windows are taken by the same code. `./measure.sh --help` for all modes.
 | `inbound` | workstation | pings the Pi on the same schedule — the direction power-save actually delays. Portable to macOS `/bin/bash` 3.2 |
 | `ab` | Pi, `sudo` | interleaved runtime toggle, `iw set power_save on/off` in alternating rounds (`-r` ≥ 3). Restores the prior state on exit, `INT`, `TERM`, `HUP` and an SSH drop (all four tested on `192.168.1.80`, 2026-09-23) |
 | `abreport` | workstation | joins an `ab` run's arm times with an `inbound` run taken alongside it |
+
+**Bench result (2026-09-24, `192.168.1.80`): no measurable effect.** The interleaved A/B
+(4 rounds × 60 packets per arm) gave outbound Pi→gateway mdev of 2.6 ms with power-save on
+and 5.8 ms with it off, with round-to-round spread larger than the difference. Inbound
+from the workstation showed ~150 ms spikes in *both* arms. A control ping from the
+workstation to the router showed the same spikes, so they come from the **workstation's
+own Wi-Fi**, not the Pi. **Run `inbound` from a wired host**, or it measures the wrong
+radio. A null bench result was always an acceptable outcome (*Honest scope*): a quiet
+single-AP bench is not where power-save costs show, if they show at all.
 
 **Headline metric:** `mdev` — the population standard deviation of every per-packet RTT
 in the window, the same formula `ping` uses — with p95 beside it. Jitter is what maps
