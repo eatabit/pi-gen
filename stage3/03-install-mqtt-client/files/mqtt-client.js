@@ -794,6 +794,125 @@ let hasDeviceReadyPrinted = fs.existsSync(DEVICE_READY_FLAG);
 // ~159 KiB/day for nothing. See persistShadowToFile().
 const SHADOW_STATE_DIR = "/run/eatabit";
 
+// BUG-094: netwatch (stage3/14-install-netwatch) owns network recovery below this
+// client. The two talk through files only:
+//
+//   CLIENT_STATUS_FILE   written here (tmpfs), read by netwatch: are we connected,
+//                        are we printing. A stale file reads as "disconnected, not
+//                        printing", so a dead client cannot pin netwatch's guards.
+//   NETWATCH_*           written by netwatch on the card, READ here. This unit is
+//                        ProtectSystem=strict and the state dir is not in its
+//                        ReadWritePaths, so this process never writes or deletes
+//                        them -- it records what it did on /run/eatabit and netwatch
+//                        does the delete.
+const CLIENT_STATUS_FILE = "/run/eatabit/mqtt-status.json";
+const CLIENT_STATUS_HEARTBEAT_MS = 30_000;
+const NETWATCH_STATE_DIR = `${EATABIT_DIR}/state`;
+const NETWATCH_REBOOT_MARKER = `${NETWATCH_STATE_DIR}/netwatch-reboot`;
+const NETWATCH_RECOVERY_PENDING = `${NETWATCH_STATE_DIR}/netwatch-recovery.json`;
+const NETWATCH_RECOVERY_LAST = `${NETWATCH_STATE_DIR}/netwatch-last-recovery.json`;
+const NETWATCH_RECOVERY_ACK = "/run/eatabit/netwatch-recovery-ack";
+// Pinned in iot-constants DEVICE.EVENTS.networkRecovered -- iot-pi does not consume
+// that package, so it is hard-coded here and must match it exactly.
+const NETWORK_RECOVERED_EVENT = "device.networkRecovered";
+
+function readUptimeSeconds() {
+  try {
+    return parseFloat(fs.readFileSync("/proc/uptime", "utf8").split(" ")[0]);
+  } catch {
+    return null;
+  }
+}
+
+let BOOT_ID = null;
+try {
+  BOOT_ID = fs.readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
+} catch {}
+
+let isPrinting = false;
+let printingSinceUptime = null;
+// Uptime at which the current connection came up. netwatch uses it to close an
+// outage's offline time at the moment we reconnected, not at its next tick.
+let connectedSinceUptime = null;
+
+function writeClientStatus() {
+  const status = {
+    connected: isConnected,
+    connectedSinceUptime: isConnected ? connectedSinceUptime : null,
+    printing: isPrinting,
+    printingSinceUptime,
+    uptime: readUptimeSeconds(),
+    bootId: BOOT_ID,
+    pid: process.pid,
+    endpoint: ENDPOINT,
+  };
+  try {
+    const tmp = `${CLIENT_STATUS_FILE}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(status), { mode: 0o644 });
+    fs.renameSync(tmp, CLIENT_STATUS_FILE);
+  } catch (err) {
+    log(`Failed to write client status file: ${err.message}`, "WARN");
+  }
+}
+
+function setPrinting(printing) {
+  isPrinting = printing;
+  printingSinceUptime = printing ? readUptimeSeconds() : null;
+  writeClientStatus();
+}
+
+// BUG-094 guard 4 -- no receipts after a netwatch-initiated reboot. Returns
+//   "this_boot"      marker belongs to this boot: skip the ready receipt
+//   "pending_reboot" netwatch wrote it THIS boot and is about to reboot: skip, and do
+//                    not set the ready flag (the reboot will clear it anyway)
+//   "none"           no marker, or a stale/malformed one: print as normal
+// A marker bound to an earlier boot is stale -- a human power-cycle must always print.
+function netwatchRebootMarkerState() {
+  let marker;
+  try {
+    marker = JSON.parse(fs.readFileSync(NETWATCH_REBOOT_MARKER, "utf8"));
+  } catch {
+    return "none";
+  }
+  if (!marker || typeof marker.writtenBootId !== "string" || !BOOT_ID) return "none";
+  if (marker.boundBootId === BOOT_ID) return "this_boot";
+  if (marker.boundBootId) return "none";
+  // Unbound: boot-print.sh did not bind it. Written by the previous boot means we
+  // are the boot the reboot produced; written by this boot means one is imminent.
+  return marker.writtenBootId === BOOT_ID ? "pending_reboot" : "this_boot";
+}
+
+// Publish netwatch's pending reconnect summary once. The ack on /run/eatabit tells
+// netwatch it may delete the pending file; it also stops a re-publish if this process
+// restarts before netwatch has done so.
+let recoveryPublishInFlight = false;
+async function publishPendingNetworkRecovery() {
+  if (!isConnected || recoveryPublishInFlight) return;
+  let pending;
+  try {
+    pending = JSON.parse(fs.readFileSync(NETWATCH_RECOVERY_PENDING, "utf8"));
+  } catch {
+    return;
+  }
+  if (!pending || !pending.id || !pending.data) return;
+  let acked = null;
+  try {
+    acked = fs.readFileSync(NETWATCH_RECOVERY_ACK, "utf8").trim();
+  } catch {}
+  if (acked === pending.id) return;
+
+  recoveryPublishInFlight = true;
+  try {
+    if (await publishEvent(NETWORK_RECOVERED_EVENT, pending.data)) {
+      fs.writeFileSync(NETWATCH_RECOVERY_ACK, pending.id, { mode: 0o644 });
+    }
+  } catch (err) {
+    log(`Failed to publish network recovery: ${err.message}`, "ERROR");
+  } finally {
+    recoveryPublishInFlight = false;
+  }
+}
+
 // Connection state tracking (Layer 1: Application Connection Watchdog)
 const WATCHDOG_INTERVAL_MS = 60_000; // Check every 60 seconds
 const MAX_DISCONNECT_DURATION_MS = 150_000; // 2.5 minutes
@@ -802,11 +921,12 @@ let lastConnectedAt = null;
 let lastDisconnectedAt = null;
 let watchdogTriggerCount = 0;
 
-// Helper function to publish events
+// Helper function to publish events. Resolves true once the broker has the event,
+// false otherwise; it never throws.
 async function publishEvent(eventType, eventData) {
   if (!mqttConnection) {
     log("Cannot publish event: MQTT connection not established", "ERROR");
-    return;
+    return false;
   }
 
   try {
@@ -819,8 +939,10 @@ async function publishEvent(eventType, eventData) {
 
     await mqttConnection.publish(EVENTS_TOPIC, payload, mqtt.QoS.AtLeastOnce);
     log(`Published event: ${eventType} to ${EVENTS_TOPIC}`);
+    return true;
   } catch (err) {
     log(`Failed to publish event: ${err.message}`, "ERROR");
+    return false;
   }
 }
 
@@ -858,6 +980,15 @@ async function publishHealthData() {
       uptimeMs:
         isConnected && lastConnectedAt ? Date.now() - lastConnectedAt : 0,
     };
+    // BUG-094: netwatch's most recent reconnect summary, readable fleet-wide in the
+    // health shadow with no backend change.
+    try {
+      healthData.lastNetworkRecovery = JSON.parse(
+        fs.readFileSync(NETWATCH_RECOVERY_LAST, "utf8"),
+      ).data;
+    } catch {
+      healthData.lastNetworkRecovery = null;
+    }
     SHADOW_CONFIG.health.state = healthData;
 
     // Publish via the health named shadow
@@ -1187,27 +1318,34 @@ function printDocument(jobId) {
 
     log(`Printing job ${jobId} from ${filePathEscPos}`);
 
-    // Pre-print check
-    const preStatus = checkPrinterStatus();
-    if (!preStatus.ready) {
-      // Throw printer offline reason for handling
-      throw new Error(preStatus.reason);
-    }
+    // BUG-094 guard 2: tell netwatch a print is in progress so it defers anything
+    // disruptive. Cleared in `finally`, so a throw cannot leave it pinned.
+    setPrinting(true);
+    try {
+      // Pre-print check
+      const preStatus = checkPrinterStatus();
+      if (!preStatus.ready) {
+        // Throw printer offline reason for handling
+        throw new Error(preStatus.reason);
+      }
 
-    // Delay after status check to let printer flush DLE EOT responses
-    execSync("sleep 1");
+      // Delay after status check to let printer flush DLE EOT responses
+      execSync("sleep 1");
 
-    // Send raw ESC/POS directly to printer device (bypass CUPS)
-    execSync(`cat "${filePathEscPos}" > /dev/usb/lp0`, { shell: "/bin/bash" });
+      // Send raw ESC/POS directly to printer device (bypass CUPS)
+      execSync(`cat "${filePathEscPos}" > /dev/usb/lp0`, { shell: "/bin/bash" });
 
-    // Wait for printer to finish processing raster data before querying status
-    execSync("sleep 2");
+      // Wait for printer to finish processing raster data before querying status
+      execSync("sleep 2");
 
-    // Post-print check
-    const postStatus = checkPrinterStatus();
-    if (!postStatus.ready) {
-      // Throw printer offline reason for handling
-      throw new Error(postStatus.reason);
+      // Post-print check
+      const postStatus = checkPrinterStatus();
+      if (!postStatus.ready) {
+        // Throw printer offline reason for handling
+        throw new Error(postStatus.reason);
+      }
+    } finally {
+      setPrinting(false);
     }
 
     log(`Job ${jobId} printed successfully`);
@@ -1266,23 +1404,36 @@ async function main() {
     lastConnectedAt = Date.now();
     log("Connected to AWS IoT Core");
     setStatusLedConnected();
+    connectedSinceUptime = readUptimeSeconds();
+    writeClientStatus();
+
+    // BUG-094 guard 4: after a netwatch-initiated reboot, print nothing.
+    const rebootMarker = hasDeviceReadyPrinted ? "none" : netwatchRebootMarkerState();
 
     // Print device ready receipt on first connection per power cycle
-    if (!hasDeviceReadyPrinted) {
-      try {
-        const printerStatus = checkPrinterStatus();
-        if (printerStatus.ready && fs.existsSync(DEVICE_READY_ESCPOS)) {
-          // Delay after status check to let printer flush DLE EOT responses
-          execSync("sleep 1");
-          execSync(`cat "${DEVICE_READY_ESCPOS}" > /dev/usb/lp0`, {
-            shell: "/bin/bash",
-          });
-          log("Printed device ready receipt");
-        } else if (!printerStatus.ready) {
-          log(`Skipping device ready print: ${printerStatus.reason}`, "WARN");
+    if (rebootMarker === "pending_reboot") {
+      log("Skipping device ready print: netwatch is about to reboot this device");
+    } else if (!hasDeviceReadyPrinted) {
+      if (rebootMarker === "this_boot") {
+        // Still set the flag below: it is what stops a later restart this boot from
+        // printing, and what tells netwatch it may remove the marker.
+        log("Skipping device ready print: netwatch-initiated reboot");
+      } else {
+        try {
+          const printerStatus = checkPrinterStatus();
+          if (printerStatus.ready && fs.existsSync(DEVICE_READY_ESCPOS)) {
+            // Delay after status check to let printer flush DLE EOT responses
+            execSync("sleep 1");
+            execSync(`cat "${DEVICE_READY_ESCPOS}" > /dev/usb/lp0`, {
+              shell: "/bin/bash",
+            });
+            log("Printed device ready receipt");
+          } else if (!printerStatus.ready) {
+            log(`Skipping device ready print: ${printerStatus.reason}`, "WARN");
+          }
+        } catch (err) {
+          log(`Failed to print device ready receipt: ${err.message}`, "ERROR");
         }
-      } catch (err) {
-        log(`Failed to print device ready receipt: ${err.message}`, "ERROR");
       }
       hasDeviceReadyPrinted = true;
       try {
@@ -1324,6 +1475,9 @@ async function main() {
       log(`Failed to push health shadow: ${err.message}`, "ERROR");
     }
 
+    // BUG-094: netwatch's reconnect summary, if it has one waiting.
+    await publishPendingNetworkRecovery();
+
     // Publish an empty JSON payload to request the next job
     try {
       await connection.publish(
@@ -1351,6 +1505,7 @@ async function main() {
       "WARN",
     );
     setStatusLedDisconnected();
+    writeClientStatus();
   });
 
   connection.on("resume", async (return_code, session_present) => {
@@ -1363,6 +1518,9 @@ async function main() {
       `Connection resumed (was disconnected for ${disconnectedDuration}ms). Return code: ${return_code}, Session present: ${session_present}`,
     );
     setStatusLedConnected();
+    connectedSinceUptime = readUptimeSeconds();
+    writeClientStatus();
+    publishPendingNetworkRecovery();
 
     // Publish an empty JSON payload to request the next job
     try {
@@ -1385,6 +1543,7 @@ async function main() {
     lastDisconnectedAt = Date.now();
     log("Disconnected from AWS IoT Core");
     setStatusLedDisconnected();
+    writeClientStatus();
   });
 
   connection.on("error", (error) => {
@@ -2257,6 +2416,14 @@ async function main() {
       }
     }, WATCHDOG_INTERVAL_MS);
 
+    // BUG-094: status heartbeat for netwatch. It also publishes netwatch's reconnect
+    // summary, which netwatch writes up to a minute AFTER this client reconnects.
+    writeClientStatus();
+    const clientStatusInterval = setInterval(() => {
+      writeClientStatus();
+      publishPendingNetworkRecovery();
+    }, CLIENT_STATUS_HEARTBEAT_MS);
+
     // Update health shadow every 15 minutes (900000 ms)
     const healthInterval = setInterval(async () => {
       await publishHealthData();
@@ -2266,6 +2433,7 @@ async function main() {
         log("Received SIGINT, disconnecting...");
         clearInterval(healthInterval);
         clearInterval(watchdogInterval);
+        clearInterval(clientStatusInterval);
 
         // Force exit after 10 seconds if graceful shutdown hangs
         const forceExit = setTimeout(() => {
@@ -2288,6 +2456,7 @@ async function main() {
         log("Received SIGTERM, disconnecting...");
         clearInterval(healthInterval);
         clearInterval(watchdogInterval);
+        clearInterval(clientStatusInterval);
 
         // Force exit after 10 seconds if graceful shutdown hangs
         const forceExit = setTimeout(() => {
