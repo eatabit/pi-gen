@@ -286,7 +286,9 @@ do_report() {
     echo
     print_station_block "$dir"
     echo
-    [[ -x $IW ]] && print_events_block "$dir"
+    # Pi only. An `if`, not `&&`: as the last command a false test would make the
+    # whole report exit 1 on the workstation, where iw does not exist.
+    if [[ -x $IW ]]; then print_events_block "$dir"; fi
   } | tee "$dir/report.txt"
 }
 
