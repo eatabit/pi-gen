@@ -11,6 +11,12 @@ for addr in 107d50c000.serial 3f215040.serial 20215040.serial fe215040.serial so
 	echo 0 > "${ROOTFS_DIR}/var/lib/systemd/rfkill/platform-${addr}:bluetooth"
 done
 
+# BUG-093: Wi-Fi power-save OFF by default for every NetworkManager Wi-Fi connection.
+# Without this every gateway inherits the brcmfmac driver default (on). Byte-identical
+# to patches/2026-09-23-wifi-powersave-off/eatabit-wifi-powersave.conf, which applies
+# the same file to devices already in the field.
+install -D -m 644 files/eatabit-wifi-powersave.conf "${ROOTFS_DIR}/etc/NetworkManager/conf.d/eatabit-wifi-powersave.conf"
+
 if [ -v WPA_COUNTRY ]; then
 	on_chroot <<- EOF
 		SUDO_USER="${FIRST_USER_NAME}" raspi-config nonint do_wifi_country "${WPA_COUNTRY}"
