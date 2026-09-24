@@ -240,14 +240,29 @@ function getWifiConfiguration() {
     const ssidMatch = iwconfig.match(/ESSID:"([^"]*)"/);
     const ssid = ssidMatch ? ssidMatch[1] : null;
 
-    // Get WiFi signal strength
-    const iwlist = execSync(
-      "iwlist wlan0 last 2>/dev/null | grep 'Signal level' || echo ''",
-      { encoding: "utf8", shell: "/bin/bash" }
+    // Live association: BSSID + RSSI (BUG-094). `iw dev wlan0 link` reports the
+    // access point we are associated with right now; `iwlist wlan0 last` reports the
+    // last scan result, which can be stale. Fall back to it only if `iw` has nothing.
+    const iwLink = execSync(
+      "iw dev wlan0 link 2>/dev/null || echo ''",
+      { encoding: "utf8", shell: "/bin/bash", timeout: 10000 }
     ).trim();
 
-    const signalMatch = iwlist.match(/Signal level[=:]\s*([-\d]+)/);
-    const signalStrength = signalMatch ? parseInt(signalMatch[1]) : null;
+    const bssidMatch = iwLink.match(/Connected to ([0-9a-fA-F:]{17})/);
+    const bssid = bssidMatch ? bssidMatch[1].toLowerCase() : null;
+    const iwSignalMatch = iwLink.match(/signal:\s*(-?\d+)/);
+
+    let signalStrength = iwSignalMatch ? parseInt(iwSignalMatch[1]) : null;
+    let signalSource = signalStrength !== null ? "iw_link" : null;
+    if (signalStrength === null) {
+      const iwlist = execSync(
+        "iwlist wlan0 last 2>/dev/null | grep 'Signal level' || echo ''",
+        { encoding: "utf8", shell: "/bin/bash", timeout: 10000 }
+      ).trim();
+      const signalMatch = iwlist.match(/Signal level[=:]\s*([-\d]+)/);
+      signalStrength = signalMatch ? parseInt(signalMatch[1]) : null;
+      signalSource = signalStrength !== null ? "iwlist_last" : null;
+    }
 
     // Get IP configuration
     const ipaddr = execSync(
@@ -284,10 +299,12 @@ function getWifiConfiguration() {
     return {
       connected: ssid !== null && ssid !== "",
       ssid: ssid,
+      bssid: bssid,
       ipAddress: ipaddr || null,
       gateway: gateway || null,
       dnsServers: dns,
       signalStrength: signalStrength,
+      signalSource: signalSource,
       linkQuality: quality || null,
     };
   } catch (err) {
