@@ -19,7 +19,7 @@ June offline-reboot-loop fix, a device that cannot reach AWS never escalates at 
 
 **netwatch** is a new oneshot + 60 s timer, independent of `mqtt-client`. When the client
 reports disconnected **and** netwatch's own DNS + TCP probe of the IoT endpoint fails, it
-escalates by accumulated offline time:
+escalates by offline time **in the current boot**:
 
 | Offline for | Step |
 |---|---|
@@ -27,10 +27,14 @@ escalates by accumulated offline time:
 | 3 min | `nmcli con down/up` on the fingerprinted connection |
 | 6 min | `nmcli radio wifi off/on` |
 | 7 min | `brcmfmac` driver reload (with its loaded `brcmfmac_*` vendor module) |
-| 10 min | reboot — then again at +30 min, +1 h, +2 h, +4 h, then every 6 h |
+| 30 min | reboot |
 
-It stops as soon as the probe or the client succeeds. The backoff counter resets after
-30 minutes continuously connected.
+It stops as soon as the probe or the client succeeds. **Every boot starts the ladder
+over**: a long outage gets the gentle steps again after each reboot and a reboot roughly
+every 30 minutes — never a widening gap. Nothing carried across a reboot drives a
+decision; the outage's total offline time, steps and reboot count are carried only to
+report them. A network that is gone for good (router replaced, password changed) keeps
+the device rebooting silently every ~30 minutes until it is re-provisioned.
 
 ### Guards
 
