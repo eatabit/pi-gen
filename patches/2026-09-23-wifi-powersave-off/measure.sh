@@ -135,7 +135,10 @@ new_outdir() {
 ping_sample() {
   local dir=$1 target=$2 sid=$3 arm=${4:--} t0 out tx rx
   t0=$(now)
-  out="$(ping -n -c "$COUNT" "$target" 2>&1 || true)"
+  # Hard deadline so an unreachable target cannot stall the schedule: Linux -w, macOS -t.
+  local dl=$(( COUNT + 15 )) dflag=-w
+  [[ "$(uname -s)" == Darwin ]] && dflag=-t
+  out="$(ping -n -c "$COUNT" "$dflag" "$dl" "$target" 2>&1 || true)"
   printf '%s\n' "$out" | awk -v t0="$t0" -v sid="$sid" -v arm="$arm" '
     /icmp_seq=/ && /time=/ {
       seq=$0; sub(/.*icmp_seq=/,"",seq); sub(/[^0-9].*/,"",seq)
@@ -254,6 +257,14 @@ print_events_block() {  # $1 dir -- Pi only: reconnects (journal) and mqtt-clien
   local s e files=""
   s="$(utc "$t0")"; e="$(utc "$t1")"
   for f in "$MQTT_LOG".1 "$MQTT_LOG"; do [[ -r $f ]] && files="$files $f"; done
+  # BUG-094's netwatch acts on its own when the device is offline (con down/up, radio
+  # cycle, driver reload, reboot). Any action inside the window invalidates it.
+  local nw=/usr/local/lib/eatabit/log/netwatch.log
+  if [[ -r $nw ]]; then
+    printf 'netwatch (BUG-094) actions in window: %s\n' \
+      "$(awk -v s="$(date -u -d "@$t0" +%Y-%m-%dT%H:%M:%S)" -v e="$(date -u -d "@$t1" +%Y-%m-%dT%H:%M:%S)" \
+          'match($0,/"ts":"[^"]*"/){ts=substr($0,RSTART+6,19)} ts>=s && ts<=e && $0 !~ /"event":"healthy"/' "$nw" | wc -l | tr -d ' ')"
+  fi
   if [[ -n $files ]]; then
     # shellcheck disable=SC2086
     zcat -f $files 2>/dev/null | awk -v s="[$s" -v e="[$e" 'substr($0,1,20)>=s && substr($0,1,20)<=e' > "$dir/mqtt-window.log"
@@ -301,9 +312,15 @@ run_schedule() {  # dir target arm  -- sample loop for HOURS at SPACING
     [[ $withstation == 1 ]] && station_row >> "$dir/station.tsv"
     ping_sample "$dir" "$target" "$sid"
     next=$(( next + SPACING ))
-    local wait=$(( next - $(now) ))
-    (( wait > 0 )) && sleep "$wait"
-    (( SPACING == 0 )) && next=$(now)
+    # After a stall (host asleep, network down) skip the missed slots rather than
+    # firing them back to back: a burst of samples is not the schedule the other
+    # window used. Missed slots show up as a gap in samples.tsv.
+    if (( SPACING > 0 )); then
+      while (( next <= $(now) )); do next=$(( next + SPACING )); done
+      sleep $(( next - $(now) ))
+    else
+      next=$(now)
+    fi
   done
   [[ $withstation == 1 ]] && station_row >> "$dir/station.tsv"
 }
