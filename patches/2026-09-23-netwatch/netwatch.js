@@ -11,12 +11,16 @@
 //    (a) mqtt-client's status file says disconnected (or is stale/missing), AND
 //    (b) our own DNS lookup + TCP connect to the IoT endpoint fail.
 //
-//  Escalation ladder, by accumulated offline time in the current outage:
+//  Escalation ladder, PER BOOT -- by offline time in the current boot:
 //    2 min   snapshot + log
 //    3 min   nmcli con down/up on the fingerprinted connection
 //    6 min   nmcli radio wifi off/on
 //    7 min   brcmfmac driver reload
-//    10 min  reboot -- then again at +30 min, +1 h, +2 h, +4 h, then every 6 h
+//    30 min  reboot
+//  Each boot starts the ladder over, so a long outage gets the gentle steps again
+//  after every reboot and a reboot roughly every 30 min -- never a widening gap.
+//  Nothing carried across a reboot drives a decision; the outage's total offline
+//  time, steps and reboot count are carried for REPORTING only.
 //
 //  NO RTC. A Pi Zero 2 W has no hardware clock, so after an offline reboot the wall
 //  clock is whatever was last saved. Every duration here is accumulated from
@@ -61,11 +65,7 @@ const SNAPSHOT_AT = 120;
 const NMCLI_AT = 180;
 const RADIO_AT = 360;
 const DRIVER_AT = 420;
-const FIRST_REBOOT_AT = 600;
-// Offline seconds since the previous reboot before the next one.
-const REBOOT_BACKOFF = [1800, 3600, 7200, 14400, 21600];
-// Reboot counter resets after this long continuously connected (current boot uptime).
-const STABLE_RESET_SECONDS = 1800;
+const REBOOT_AT = 1800;
 // Never reboot in the first few minutes after boot.
 const REBOOT_UPTIME_FLOOR = 300;
 // mqtt-client heartbeats every 30 s; older than this and the file is stale.
@@ -468,11 +468,6 @@ async function stepDriverReload() {
   return rm.ok && load.ok ? "ok" : "failed";
 }
 
-function rebootDue(state, episode) {
-  if (state.rebootCount === 0) return episode.offlineSeconds >= FIRST_REBOOT_AT;
-  const wait = REBOOT_BACKOFF[Math.min(state.rebootCount - 1, REBOOT_BACKOFF.length - 1)];
-  return state.offlineSinceLastReboot >= wait;
-}
 
 // ---------------------------------------------------------------------------
 //  Receipt-suppression marker housekeeping
@@ -538,8 +533,6 @@ function freshState() {
     online: null,
     onlineSinceUptime: null,
     episode: null,
-    rebootCount: 0,
-    offlineSinceLastReboot: 0,
     fingerprint: null,
     endpoint: null,
     lastHealthyLogUptime: null,
@@ -552,12 +545,16 @@ function newEpisode() {
     startedApprox: new Date().toISOString(),
     offlineSeconds: 0,
     steps: [],
-    done: {},
     reboots: 0,
     lastStep: null,
     lastSnapshot: null,
-    loggedSkips: {},
+    boot: null,
   };
+}
+
+// The ladder's position in THIS boot. Replaced on every boot, so the ladder starts over.
+function newBootLadder(bootId, offlineSeconds) {
+  return { bootId, offlineSeconds, done: {}, loggedSkips: {} };
 }
 
 function fixedBy(episode) {
@@ -573,7 +570,11 @@ function recordStep(episode, step, outcome, extra = {}) {
   if (step !== "snapshot" && outcome !== "skipped_guard" && outcome !== "deferred_printing") {
     episode.lastStep = entry;
   }
-  logEntry("step", { ...entry, ...extra });
+  logEntry("step", {
+    ...entry,
+    bootOfflineSeconds: Math.round(episode.boot?.offlineSeconds ?? 0),
+    ...extra,
+  });
 }
 
 async function main() {
@@ -672,7 +673,6 @@ async function handleOnline(state, { uptime, bootId, firstRunThisBoot, client, d
     if (client.connected && client.connectedSinceUptime !== null) {
       const stillOffline = Math.min(delta, Math.max(0, client.connectedSinceUptime - windowStart));
       episode.offlineSeconds += stillOffline;
-      state.offlineSinceLastReboot += stillOffline;
     }
     CTX.offlineSeconds = episode.offlineSeconds;
     const by = fixedBy(episode);
@@ -702,12 +702,6 @@ async function handleOnline(state, { uptime, bootId, firstRunThisBoot, client, d
     logEntry("startup", { result: "online" });
   }
 
-  if (state.rebootCount > 0 && uptime - state.onlineSinceUptime >= STABLE_RESET_SECONDS) {
-    logEntry("backoff_reset", { rebootCount: state.rebootCount });
-    state.rebootCount = 0;
-    state.offlineSinceLastReboot = 0;
-  }
-
   if (state.lastHealthyLogUptime === null || firstRunThisBoot || uptime - state.lastHealthyLogUptime >= HEALTHY_LOG_EVERY) {
     const link = await run("iw", ["dev", WIFI_IFACE, "link"], 8000);
     const w = parseIwLink(link.ok ? link.stdout : "");
@@ -720,43 +714,51 @@ async function handleOffline(state, { uptime, bootId, firstRunThisBoot, delta, c
   let episode = state.episode;
   if (!episode) {
     episode = state.episode = newEpisode();
+    episode.boot = newBootLadder(bootId, 0);
     logEntry("offline", { probe });
   } else {
     // Continuing outage -- including across a reboot, where delta is this boot's
     // uptime. Never a wall-clock subtraction.
     episode.offlineSeconds += delta;
-    state.offlineSinceLastReboot += delta;
+    if (!episode.boot || episode.boot.bootId !== bootId) {
+      // A new boot, still offline: start the ladder over. It has been offline since
+      // it booted, so this boot's clock starts at its uptime.
+      episode.boot = newBootLadder(bootId, delta);
+    } else {
+      episode.boot.offlineSeconds += delta;
+    }
   }
   CTX.offlineSeconds = episode.offlineSeconds;
   if (firstRunThisBoot) {
     logEntry("startup", { result: "still offline", previousStep: episode.lastStep?.step || null, probe });
   }
 
-  const acc = episode.offlineSeconds;
+  const ladder = episode.boot;
+  const acc = ladder.offlineSeconds;
 
-  if (acc >= SNAPSHOT_AT && !episode.done.snapshot) {
+  if (acc >= SNAPSHOT_AT && !ladder.done.snapshot) {
     const snap = await takeSnapshot(state, endpoint);
     episode.lastSnapshot = snap.summary;
-    episode.done.snapshot = true;
+    ladder.done.snapshot = true;
     recordStep(episode, "snapshot", "ok", { snapshot: snap.full });
     return;
   }
 
   let next = null;
-  if (acc >= NMCLI_AT && !episode.done.nmcli_reconnect) next = "nmcli_reconnect";
-  else if (acc >= RADIO_AT && !episode.done.radio_cycle) next = "radio_cycle";
-  else if (acc >= DRIVER_AT && !episode.done.driver_reload) next = "driver_reload";
-  else if (acc >= FIRST_REBOOT_AT && rebootDue(state, episode)) next = "reboot";
+  if (acc >= NMCLI_AT && !ladder.done.nmcli_reconnect) next = "nmcli_reconnect";
+  else if (acc >= RADIO_AT && !ladder.done.radio_cycle) next = "radio_cycle";
+  else if (acc >= DRIVER_AT && !ladder.done.driver_reload) next = "driver_reload";
+  else if (acc >= REBOOT_AT) next = "reboot";
   if (!next) return;
 
   // Guard 1 -- act only on a network that has worked.
   const fp = await fingerprintMatches(state.fingerprint);
   if (!fp.ok) {
-    if (!episode.loggedSkips[next]) {
-      episode.loggedSkips[next] = true;
+    if (!ladder.loggedSkips[next]) {
+      ladder.loggedSkips[next] = true;
       recordStep(episode, next, "skipped_guard", { guard: fp.reason });
     }
-    if (next !== "reboot") episode.done[next] = true;
+    if (next !== "reboot") ladder.done[next] = true;
     return;
   }
 
@@ -768,8 +770,8 @@ async function handleOffline(state, { uptime, bootId, firstRunThisBoot, delta, c
 
   // Guard 3 -- uptime floor on the reboot.
   if (next === "reboot" && uptime < REBOOT_UPTIME_FLOOR) {
-    if (!episode.loggedSkips.uptime_floor) {
-      episode.loggedSkips.uptime_floor = true;
+    if (!ladder.loggedSkips.uptime_floor) {
+      ladder.loggedSkips.uptime_floor = true;
       recordStep(episode, next, "skipped_guard", { guard: "uptime_floor" });
     }
     return;
@@ -788,7 +790,7 @@ async function handleOffline(state, { uptime, bootId, firstRunThisBoot, delta, c
   if (next === "nmcli_reconnect") outcome = await stepNmcliReconnect(state.fingerprint);
   else if (next === "radio_cycle") outcome = await stepRadioCycle();
   else outcome = await stepDriverReload();
-  episode.done[next] = true;
+  ladder.done[next] = true;
   recordStep(episode, next, outcome);
 }
 
@@ -797,9 +799,7 @@ async function doReboot(state, episode, bootId) {
   // and mqtt-client.js not to print on the boot this causes.
   writeJsonAtomic(REBOOT_MARKER, { writtenBootId: bootId, boundBootId: null });
   episode.reboots += 1;
-  state.rebootCount += 1;
-  state.offlineSinceLastReboot = 0;
-  recordStep(episode, "reboot", "ok", { rebootCount: state.rebootCount });
+  recordStep(episode, "reboot", "ok", { rebootCount: episode.reboots });
   state.bootId = bootId;
   state.lastUptime = readUptime();
   state.online = false;
