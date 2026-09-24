@@ -86,8 +86,11 @@ sudo tail -n 3 /usr/local/lib/eatabit/log/netwatch.log  # "startup" / "healthy" 
 
 **A device behind entry 5 refuses** and says why. Climb the lineage first
 (`2026-08-20-ngrok-session-reclaim` → `2026-08-19-mqtt-keepalive-tolerance` →
-`2026-08-23-app-permissions-and-shadow-churn`). A device on **v1.0.1–v1.0.7, v1.1.0 or
-v1.1.1 cannot enter the lineage** and needs a reflash to get this fix.
+`2026-08-23-app-permissions-and-shadow-churn`). **The version string does not decide
+this — the checksums do.** Montclair (`000000004cfd7447`) reports **v1.0.7** yet sits
+exactly on every accepted prior (`--check` → would apply, 2026-09-24): earlier field
+patches had already carried its `mqtt-client.js` to `7ecbf0ea…`. Only a device whose
+`mqtt-client.js` no lineage patch accepts needs a reflash — run `--check` and see.
 
 ## Rollback
 

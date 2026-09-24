@@ -203,9 +203,10 @@ explain_refusal() {
   log "  A device behind that point must first climb the mqtt-client lineage:"
   log "    2026-08-20-ngrok-session-reclaim -> 2026-08-19-mqtt-keepalive-tolerance ->"
   log "    2026-08-23-app-permissions-and-shadow-churn -> this patch."
-  log "  The lineage entry point accepts only stock v1.0.8-v1.0.10 / v1.1.2-v1.1.4, so a"
-  log "  device on v1.0.1-v1.0.7, v1.1.0 or v1.1.1 cannot take this patch; it needs a"
-  log "  reflash. See patches/README.md -> Lineages."
+  log "  The version string does not decide this -- the checksums do. A device reporting"
+  log "  v1.0.7 was found at 7ecbf0ea (earlier field patches had carried it up the lineage)."
+  log "  Only if no lineage patch accepts its mqtt-client.js does it need a reflash."
+  log "  See patches/README.md -> Lineages."
   log "  If the observed sha matches none of the above, report it rather than forcing."
 }
 
