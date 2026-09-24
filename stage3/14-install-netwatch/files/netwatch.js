@@ -76,6 +76,8 @@ const PRINT_GUARD_MAX_SECONDS = 600;
 // A recovery seen within this many offline seconds of the last step is credited to it.
 const FIXED_BY_WINDOW = 240;
 const HEALTHY_LOG_EVERY = 900;
+// While the client is down but our own probe succeeds, repeat that entry this often.
+const SPLIT_LOG_EVERY = 900;
 const MAX_STEPS_IN_SUMMARY = 20;
 const MAX_STEPS_KEPT = 50;
 
@@ -251,7 +253,7 @@ async function probeEndpoint(endpoint) {
     sock.once("connect", () => done(true));
     sock.once("error", () => done(false));
   });
-  return connected ? { ok: true } : { ok: false, stage: "tcp", address };
+  return connected ? { ok: true, address } : { ok: false, stage: "tcp", address };
 }
 
 // ---------------------------------------------------------------------------
@@ -541,6 +543,7 @@ function freshState() {
     fingerprint: null,
     endpoint: null,
     lastHealthyLogUptime: null,
+    split: null,
   };
 }
 
@@ -604,6 +607,8 @@ async function main() {
     online = probe.ok;
   }
 
+  noteSplit(state, { uptime, firstRunThisBoot, client, probe });
+
   if (online) {
     await handleOnline(state, { uptime, bootId, firstRunThisBoot, client, delta });
   } else {
@@ -614,6 +619,45 @@ async function main() {
   state.lastUptime = readUptime();
   state.online = online;
   writeJsonAtomic(STATE_FILE, state);
+}
+
+// The comparison that tells "DNS / the network is down" apart from "the client
+// process is wedged" (BUG-057). Both sides call getaddrinfo() against the same
+// resolv.conf; if our probe resolves and connects while the client stays down, the
+// fault is local to the client process. Logged when it starts, every 15 min while it
+// lasts, and when it ends -- with the resolver state at that moment.
+function noteSplit(state, { uptime, firstRunThisBoot, client, probe }) {
+  const split = !client.connected && probe !== null && probe.ok;
+  if (firstRunThisBoot) state.split = null; // uptime-based; never carried across a boot
+  if (split) {
+    if (!state.split) {
+      state.split = { sinceUptime: uptime, lastLogUptime: null };
+    }
+    if (state.split.lastLogUptime === null || uptime - state.split.lastLogUptime >= SPLIT_LOG_EVERY) {
+      let nameservers = [];
+      try {
+        nameservers = fs
+          .readFileSync("/etc/resolv.conf", "utf8")
+          .split("\n")
+          .filter((l) => l.startsWith("nameserver"))
+          .map((l) => l.split(/\s+/)[1]);
+      } catch {}
+      logEntry("client_down_probe_ok", {
+        forSeconds: Math.round(uptime - state.split.sinceUptime),
+        clientStatusFresh: client.fresh,
+        probeAddress: probe.address,
+        nameservers,
+      });
+      state.split.lastLogUptime = uptime;
+    }
+  } else if (state.split) {
+    logEntry("client_down_probe_ok_ended", {
+      forSeconds: Math.round(uptime - state.split.sinceUptime),
+      clientConnected: client.connected,
+      probeOk: probe ? probe.ok : null,
+    });
+    state.split = null;
+  }
 }
 
 async function handleOnline(state, { uptime, bootId, firstRunThisBoot, client, delta }) {
