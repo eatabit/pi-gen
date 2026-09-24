@@ -117,6 +117,16 @@ ACCEPTED_MQTT_PRIOR_SHAS=(
   "${FIXED_MQTT_SHA}"                                                 # already fixed
 )
 
+# --- SUPERSEDED: states this patch must NOT touch -----------------------------
+# A device whose mqtt-client.js is DOWNSTREAM of this patch already has this fix plus
+# later ones. It is NOT a prior: this patch's payload IS 7ecbf0ea, so installing it
+# over a downstream sha would overwrite newer code with older. Checked BEFORE the
+# prior list, and exits 0 -- the device needs nothing. See patches/README.md ->
+# "A device flashed to v1.0.11 or later is AHEAD of most of this lineage".
+SUPERSEDED_MQTT_SHAS=(
+  "fff9838f188034bf53db970858451efacd7ebd59058c1687e815354600cc01b8" # BUG-094 2026-09-23-netwatch
+)
+
 KNOWN_VERSIONS=(1.0.8 1.0.9 1.0.10 1.1.2 1.1.3 1.1.4)
 
 log()  { printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*"; }
@@ -211,6 +221,7 @@ report_state() {
 }
 
 is_fixed() { [[ "$(mqtt_sha)" == "$FIXED_MQTT_SHA" ]]; }
+is_superseded() { in_list "$(mqtt_sha)" "${SUPERSEDED_MQTT_SHAS[@]}"; }
 
 # --- Prerequisite: 2026-08-19-mqtt-keepalive-tolerance ------------------------
 # Its output sha IS this patch's accepted prior, so the sha check alone is
@@ -267,6 +278,12 @@ do_check() {
 
   if is_fixed; then
     log "RESULT: already patched -- a real run would NO-OP. (exit 0)"
+    exit 0
+  fi
+  if is_superseded; then
+    log "RESULT: NO-OP -- device is AHEAD of this patch and already has this fix"
+    log "        (its mqtt-client.js is downstream of ${FIXED_MQTT_SHA:0:16})."
+    log "        Applying would DOWNGRADE it. Nothing would be modified. (exit 0)"
     exit 0
   fi
 
@@ -360,6 +377,12 @@ do_apply() {
 
   if is_fixed; then
     log "mqtt-client.js is already at the fixed sha. Nothing to do."
+    exit 0
+  fi
+  if is_superseded; then
+    log "mqtt-client.js is DOWNSTREAM of this patch (sha $(mqtt_sha))."
+    log "The device already carries this fix and later ones -- applying would DOWNGRADE it."
+    log "Nothing to do."
     exit 0
   fi
 
