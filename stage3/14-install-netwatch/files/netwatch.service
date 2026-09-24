@@ -1,0 +1,18 @@
+[Unit]
+Description=Eatabit network-recovery watchdog (BUG-094)
+# Deliberately NOT After/Wants=network-online.target: this unit exists to run when the
+# network is not online.
+After=NetworkManager.service
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/bin/node /usr/local/lib/eatabit/bin/netwatch.js
+# A wedged SDIO bus can hang iw/modprobe. Each command has its own timeout, and this
+# bounds the run as a whole so the next timer tick is never blocked indefinitely.
+TimeoutStartSec=300
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=netwatch
+# No ProtectSystem/ReadWritePaths hardening: this unit must run nmcli, reload the WiFi
+# driver and reboot the device. It is not internet-facing.
