@@ -153,6 +153,12 @@ Removes the conf (or restores a pre-existing one from the backup),
 | driver reload (`modprobe -r brcmfmac_cyw brcmfmac; modprobe brcmfmac`) | back to **on** | **off** |
 | reboot | **on** (stock boot) | **off** |
 
+**Same on `hw/1.1`:** `192.168.1.163` (v1.1.5), 2026-09-24, 14:21–14:24 UTC. Apply:
+power-save on → off, `mqtt-client` `MainPID` unchanged, no reassociation, and NM journaled
+the reloaded conf. `--check` exits 2 / 1 / 1 / 0. Rollback → on, then re-apply. Power-save
+stays off after con down/up, radio off/on, driver reload and reboot. Control: a driver reload
+without the conf → on.
+
 `brcmfmac` keeps the last runtime setting across a reconnect or a radio cycle, so those
 two events do not tell the conf from a one-shot `iw`. **A driver reload and a reboot reset
 the chip to its default (on), and the conf is what turns power-save back off after both.**
