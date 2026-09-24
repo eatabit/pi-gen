@@ -7,6 +7,10 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Wi-Fi power-save is now explicitly **off**. No image set it, so every gateway ran with the `brcmfmac` driver default — on — which delays traffic into the device until the next beacon and is a known source of dropped associations on the Pi Zero 2 W. The image now installs `/etc/NetworkManager/conf.d/eatabit-wifi-powersave.conf` (`[connection] wifi.powersave = 2`) from `stage2/02-net-tweaks/`, a global default that NetworkManager re-applies at every activation, so it also covers networks provisioned later from the app. This is hardening, not a diagnosed fix: power-save is not proven to have caused any specific outage (`BUG-093` → *Honest scope*). Devices already in the field get the same file from the field patch `patches/2026-09-23-wifi-powersave-off/`, which restarts nothing and drops no connection. v1.1.5 does **not** carry this; it ships in the next release. (`BUG-093`)
+
 ## [1.1.5] — 2026-08-25
 
 *Ships seven of the ten items gated on this release, plus two that were not gated by it —
