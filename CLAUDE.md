@@ -118,4 +118,5 @@ WantedBy=multi-user.target
 
 - Enable the service in its install script: `systemctl enable service.service`.
 - Add a logrotate config for `/usr/local/lib/eatabit/log/*.log`.
+- A **stock** unit that writes the log dir needs the same `ReadWritePaths` grant via a drop-in: Debian's `logrotate.service` has `ProtectSystem=full`, so without `logrotate.service.d/eatabit.conf` every rotation fails with EROFS (`BUG-097`).
 - Use `on_chroot` for `systemctl` commands in build scripts.
