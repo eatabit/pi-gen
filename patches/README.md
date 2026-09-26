@@ -31,6 +31,7 @@ planning a campaign; the directory listing on its own will mislead you.
 | **`log-permissions`** | `/usr/local/lib/eatabit/{log,config,reset}` (directory modes), `/etc/logrotate.d/eatabit-mqtt-client`, `/etc/logrotate.d/eatabit-ble-config` | 1. [`2026-08-23-log-permissions-and-rotation`](./2026-08-23-log-permissions-and-rotation/) — **independent** |
 | **`ble-config`** | `/usr/local/lib/eatabit/bin/ble-config.js` | 1. [`2026-08-24-ble-config-permissions`](./2026-08-24-ble-config-permissions/) — **independent** |
 | **`wifi-powersave`** | `/etc/NetworkManager/conf.d/eatabit-wifi-powersave.conf` | 1. [`2026-09-23-wifi-powersave-off`](./2026-09-23-wifi-powersave-off/) — **independent** |
+| **`logrotate-unit`** | `/etc/systemd/system/logrotate.service.d/eatabit.conf` | 1. [`2026-09-26-logrotate-log-dir-write`](./2026-09-26-logrotate-log-dir-write/) — **independent** |
 
 **`2026-08-19-gateway-timezone-utc` targets files no other patch touches** — it replaces
 no file at all, gating instead on the deployed timezone state — so it is independent of
@@ -52,6 +53,16 @@ and drops no connection**: it re-reads NetworkManager's config (`nmcli general r
 conf`) and switches power-save off on the live association with `iw`, never reloading
 NetworkManager or cycling a connection. It records `mqtt-client`'s `MainPID` before and
 after as evidence.
+
+**`2026-09-26-logrotate-log-dir-write` opens the `logrotate-unit` lineage.** It adds one
+systemd drop-in for the stock `logrotate.service`, a file no other patch touches, so it is
+independent of every other lineage and may be applied at any point in a campaign. It
+**replaces no file** — it gates on deployed state (the drop-in absent / ours /
+unrecognised, and the unit loaded) — and it **restarts nothing**: `daemon-reload` only. It
+is what makes the stanzas from `2026-08-23-log-permissions-and-rotation` and
+`2026-09-23-netwatch` runnable at all — without it every rotation into
+`/usr/local/lib/eatabit/log` fails with `EROFS` under the unit's `ProtectSystem=full`
+(`BUG-097`) — but it requires neither.
 
 **ISSUE-068 ships THREE patches, and they share no file with one another**, so they may be
 applied in any order — but **all three are needed** to close it on a device:
@@ -230,6 +241,11 @@ marker. Renaming a patch that has ever been applied in the field orphans those, 
 > fixed*. Ship the power-save patch **before or with** netwatch: without it, netwatch's
 > driver reload and reboot steps return power-save to the driver default (on).
 >
+> **A third, added later:** `2026-09-26-logrotate-log-dir-write` (`BUG-097`) also fixes
+> something v1.0.11 and v1.1.5 still ship — the `logrotate.service` sandbox that makes
+> every eatabit rotation fail — so it too reports *would apply* on a freshly flashed
+> device.
+>
 > **The three that report AHEAD are the ones to be careful with.** `2026-06-30-offline-reboot-and-expired-job`,
 > `2026-08-19-mqtt-keepalive-tolerance` and `2026-08-20-ngrok-session-reclaim` each bundle a
 > payload **older** than what the release ships, so forcing one onto a v1.0.11 / v1.1.5
@@ -248,6 +264,7 @@ marker. Renaming a patch that has ever been applied in the field orphans those, 
 | 2026-08-19 | [`2026-08-19-mqtt-keepalive-tolerance`](./2026-08-19-mqtt-keepalive-tolerance/) | devices at the `2026-08-20-ngrok-session-reclaim` end state (sha `1d49a43a…`), which is also repo source on both lines — checksum-gated, **js only**, exactly one accepted prior | Medium — one late `PINGRESP` tears down a healthy connection; every disconnect on `00000000d9b7e5d1` was `AWS_ERROR_MQTT_TIMEOUT` at `n × 30 s + ~3.2 s` while WiFi never dropped. Widens the ping window 3 s → 10 s; genuine-offline detection 33 s → 40 s. **Validated on hardware** 2026-08-23 on **both lines** — v1.1.4 / v1.1.0 (`hw/1.1`) and v1.0.10 (`hw/1.0`): applied, one restart each, reconnected to AWS IoT, zero errors; `--check` exit codes 0/1/2 confirmed. Also applied to one authorized field device on v1.1.1. At that date the >=24 h soak and the `--rollback` exercise had not yet been run; see `BUG-045` for their outcome. (`BUG-045`) |
 | 2026-09-23 | [`2026-09-23-wifi-powersave-off`](./2026-09-23-wifi-powersave-off/) | **every released version, v1.0.1–v1.0.11 and v1.1.0–v1.1.5 — including the current releases** (gated on deployed state, not a checksum: this patch adds a file and replaces none) | Hardening (P2) — no image sets Wi-Fi power-save, so every gateway runs with the `brcmfmac` driver default, **on**. Adds a NetworkManager `conf.d` default `wifi.powersave = 2` and turns power-save off on the live association. **Removes a suspect, not a diagnosed cause** — see its README → *Honest scope*. **Restarts nothing, drops no connection.** Efficacy is measured before/after by its own `measure.sh` (`BUG-093`) |
 | 2026-09-23 | [`2026-09-23-netwatch`](./2026-09-23-netwatch/) | devices at the `2026-08-23-app-permissions-and-shadow-churn` end state (`mqtt-client.js` `7ecbf0ea…`) — **including v1.0.11 / v1.1.5, which ship it** — checksum-gated per file: `boot-print.sh` `2998dd94…` and `health-monitor.js` `e251ba26…` (each byte-identical in all 17 release tags), netwatch files absent. **Unlike every row above, this one is NOT already in v1.0.11 / v1.1.5.** | High (P1) — a device that loses its network stays offline until someone power-cycles it: nothing watches the link. Installs **netwatch** (nmcli reconnect → radio cycle → driver reload → reboot at 30 min, the ladder starting over on every boot; guarded against never-connected networks and in-flight prints), suppresses **both** boot receipts after a netwatch reboot, and publishes `device.networkRecovered`. Restarts `mqtt-client`. (`BUG-094`) |
+| 2026-09-26 | [`2026-09-26-logrotate-log-dir-write`](./2026-09-26-logrotate-log-dir-write/) | **every released version, v1.0.1–v1.0.11 and v1.1.0–v1.1.5 — including the current releases** (gated on deployed state, not a checksum: this patch adds a drop-in and replaces nothing). **Unlike most rows above, this one is NOT already in v1.0.11 / v1.1.5.** | Medium (P2) — the stock `logrotate.service` runs with `ProtectSystem=full`, which makes `/usr` read-only inside the unit, and the eatabit logs live under `/usr`, so **no automatic rotation has ever succeeded on any device** — `logrotate` exits 1 nightly, failing the whole run, while advancing its state file. Observed on at least 25 devices across both lines. Adds `ReadWritePaths=-/usr/local/lib/eatabit/log` via `/etc/systemd/system/logrotate.service.d/eatabit.conf`. **Restarts nothing.** **Validated in-service** 2026-09-26 on bench `ce4c5d90` (hw/1.0): the nightly run succeeded and rotated files. Verify by the next nightly run rotating a file — never by a shell `logrotate -f`, and never by exit 0 alone (`BUG-097`) |
 
 > **Restarts nothing at all:** `2026-08-19-gateway-timezone-utc` goes further than the
 > note below — it restarts no service whatsoever, so it cannot drop the ngrok tunnel, the
