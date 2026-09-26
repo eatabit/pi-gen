@@ -117,5 +117,27 @@ mkdir -p /usr/local/lib/eatabit/log
 # mqtt-client.log had never once been rotated on any release of either line.
 chmod 0755 /usr/local/lib/eatabit/log
 
+# BUG-097: let the stock logrotate.service write the directory created above.
+#
+# Debian's logrotate.service ships ProtectSystem=full, which mounts /usr READ-ONLY
+# inside that unit's mount namespace. These logs live under /usr, so every rotation
+# failed with EROFS and logrotate exited 1 -- failing the whole nightly run, so
+# nothing on the device rotated. The eatabit units get this same grant from their
+# own unit files (see CLAUDE.md -> service template); logrotate is a stock unit, so
+# it needs a drop-in. Naming the DIRECTORY covers every eatabit-* stanza at once.
+# The leading '-' makes a missing directory a no-op, not a unit failure.
+# ProtectSystem=full itself stays: only this directory is opened.
+#
+# Byte-identical to patches/2026-09-26-logrotate-log-dir-write (FIXED_SHA
+# 8ec46a1e...) -- no comments in the file, so do not add any here without updating
+# the patch's FIXED_SHA in the same change.
+echo "Installing logrotate.service drop-in for the eatabit log directory..."
+mkdir -p /etc/systemd/system/logrotate.service.d
+cat > /etc/systemd/system/logrotate.service.d/eatabit.conf << 'LOGROTATE_DROPIN'
+[Service]
+ReadWritePaths=-/usr/local/lib/eatabit/log
+LOGROTATE_DROPIN
+chmod 0644 /etc/systemd/system/logrotate.service.d/eatabit.conf
+
 echo "log2ram installation and configuration complete!"
 EOF
